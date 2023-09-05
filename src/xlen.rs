@@ -5,7 +5,21 @@ pub trait Cast<T>: Sized {
     fn into(self) -> T;
 }
 
-macro_rules! cast_types {
+pub trait CastPrimitive:
+    Cast<u8>
+    + Cast<u16>
+    + Cast<u32>
+    + Cast<u64>
+    + Cast<u128>
+    + Cast<i8>
+    + Cast<i16>
+    + Cast<i32>
+    + Cast<i64>
+    + Cast<i128>
+{
+}
+
+macro_rules! impl_cast_primitive {
     ($t:ty, $($u:ty),*) => {
         $(
             impl Cast<$u> for $t {
@@ -17,60 +31,72 @@ macro_rules! cast_types {
                 }
             }
         )*
+        impl CastPrimitive for $t {}
     };
 }
 
 macro_rules! impl_cast {
-    ($($t:ty),*) => {
-        $(
-            cast_types!($t, u8, u16, u32, u64, u128, i8, i16, i32, i64, i128);
-        )*
+    ($t:ty) => {
+        impl_cast_primitive!($t, u8, u16, u32, u64, u128, i8, i16, i32, i64, i128);
     };
 }
 
 pub trait XlenOp: Sized {
     /// high parts for signed * signed
+    #[cfg(feature = "M")]
     fn mulh(self, rhs: Self) -> Self;
     /// high parts for unsigned * unsigned
+    #[cfg(feature = "M")]
     fn mulhu(self, rhs: Self) -> Self;
     /// high parts for signed * unsigned
+    #[cfg(feature = "M")]
     fn mulhsu(self, rhs: Self) -> Self;
 }
 
+#[cfg(feature = "M")]
 fn u64_mul_h32(lhs: u64, rhs: u64) -> u32 {
     let res = lhs.wrapping_mul(rhs);
     (res >> 32) as u32
 }
 
 impl XlenOp for u32 {
+    #[cfg(feature = "M")]
     fn mulhu(self, rhs: Self) -> Self {
         u64_mul_h32(self as u64, rhs as u64)
     }
+    #[cfg(feature = "M")]
     fn mulh(self, rhs: Self) -> Self {
         u64_mul_h32(self as i32 as u64, rhs as i32 as u64)
     }
+    #[cfg(feature = "M")]
     fn mulhsu(self, rhs: Self) -> Self {
         u64_mul_h32(self as i32 as u64, rhs as u64)
     }
 }
 
+#[cfg(all(feature = "M", feature = "RV64"))]
 fn u128_mul_h64(lhs: u128, rhs: u128) -> u64 {
     let res = lhs.wrapping_mul(rhs);
     (res >> 64) as u64
 }
 
+#[cfg(feature = "RV64")]
 impl XlenOp for u64 {
+    #[cfg(feature = "M")]
     fn mulhu(self, rhs: Self) -> Self {
         u128_mul_h64(self as u128, rhs as u128)
     }
+    #[cfg(feature = "M")]
     fn mulh(self, rhs: Self) -> Self {
         u128_mul_h64(self as i64 as u128, rhs as i64 as u128)
     }
+    #[cfg(feature = "M")]
     fn mulhsu(self, rhs: Self) -> Self {
         u128_mul_h64(self as i64 as u128, rhs as u128)
     }
 }
 
+#[cfg(all(feature = "M", feature = "RV128"))]
 fn u256_mul(al: u128, ah: u128, bl: u128, bh: u128) -> (u128, u128) {
     let res0 = al.wrapping_mul(bl);
     let res1 = ah
@@ -80,7 +106,9 @@ fn u256_mul(al: u128, ah: u128, bl: u128, bh: u128) -> (u128, u128) {
     (res0, res1)
 }
 
+#[cfg(feature = "RV128")]
 impl XlenOp for u128 {
+    #[cfg(feature = "M")]
     fn mulhu(self, rhs: Self) -> Self {
         let al = self as u64;
         let ah = (self >> 64) as u64;
@@ -105,9 +133,11 @@ impl XlenOp for u128 {
         let res3 = ahbh_h.wrapping_add(c2 as u64 + c3 as u64);
         (res2 as u128) | ((res3 as u128) << 64)
     }
+    #[cfg(feature = "M")]
     fn mulh(self, rhs: Self) -> Self {
         u256_mul(self, self.sign_blast(), rhs, rhs.sign_blast()).1
     }
+    #[cfg(feature = "M")]
     fn mulhsu(self, rhs: Self) -> Self {
         u256_mul(self, self.sign_blast(), rhs, 0).1
     }
@@ -125,16 +155,7 @@ pub trait XlenT:
     + std::ops::BitXor<Output = Self>
     + std::ops::Shl<u32, Output = Self>
     + std::ops::Shr<u32, Output = Self>
-    + Cast<u8>
-    + Cast<u16>
-    + Cast<u32>
-    + Cast<u64>
-    + Cast<u128>
-    + Cast<i8>
-    + Cast<i16>
-    + Cast<i32>
-    + Cast<i64>
-    + Cast<i128>
+    + CastPrimitive
     + Cast<Self>
     + XlenOp
 {
@@ -146,125 +167,155 @@ pub trait XlenT:
     where
         Self: Cast<T>;
     /// truncate to low 32 bit
+    #[cfg(feature = "RV64")]
     fn trunc32(self) -> Self;
     /// sign-extend from low 32 bit
+    #[cfg(feature = "RV64")]
     fn sext32(self) -> Self;
     /// truncate to low 64 bit
+    #[cfg(feature = "RV128")]
     fn trunc64(self) -> Self;
     /// sign-extend from low 64 bit
+    #[cfg(feature = "RV128")]
     fn sext64(self) -> Self;
     /// signed compare
     fn scmp(self, rhs: Self) -> std::cmp::Ordering;
     /// shift right arithmetic
     fn sra(self, shamt: u32) -> Self;
     /// signed-self >= 0 ? 0 : -1;
+    #[cfg(feature = "RV128")]
     fn sign_blast(self) -> Self;
     /// carrying_add in nightly feature
+    #[cfg(feature = "RV128")]
     fn adc(self, rhs: Self, carry: bool) -> (Self, bool);
+    #[cfg(feature = "M")]
     fn mul(self, rhs: Self) -> Self;
+    #[cfg(feature = "M")]
     fn div(self, rhs: Self) -> Self;
+    #[cfg(feature = "M")]
     fn rem(self, rhs: Self) -> Self;
+    #[cfg(feature = "M")]
     fn divu(self, rhs: Self) -> Self;
+    #[cfg(feature = "M")]
     fn remu(self, rhs: Self) -> Self;
 }
 
 macro_rules! impl_xlen_t {
-    ($($t:ty, $s:ty), *) => {
-        $(
-            impl XlenT for $t {
-                fn xlen() -> u32 {
-                    <$t>::BITS
-                }
-                fn add<T>(self, rhs: T) -> Self
-                where
-                    Self: Cast<T>
-                {
-                    self.wrapping_add(<Self as Cast<T>>::from(rhs))
-                }
-                fn sub<T>(self, rhs: T) -> Self
-                where
-                    Self: Cast<T>
-                {
-                    self.wrapping_sub(<Self as Cast<T>>::from(rhs))
-                }
-                fn trunc32(self) -> Self {
-                    self as u32 as Self
-                }
-                fn sext32(self) -> Self {
-                    self as i32 as Self
-                }
-                fn trunc64(self) -> Self {
-                    self as u64 as Self
-                }
-                fn sext64(self) -> Self {
-                    self as i64 as Self
-                }
-                fn scmp(self, rhs: Self) -> std::cmp::Ordering {
-                    let lhs = self as $s;
-                    let rhs = rhs as $s;
-                    lhs.cmp(&rhs)
-                }
-                fn sra(self, shamt: u32) -> Self {
-                    let lhs = self as $s;
-                    (lhs >> shamt) as $t
-                }
-                fn adc(self, rhs: Self, carry: bool) -> (Self, bool) {
-                    let (res, c0) = self.overflowing_add(rhs);
-                    let (res, c1) = res.overflowing_add(carry as $t);
-                    (res, c0 || c1)
-                }
-                fn sign_blast(self) -> Self {
-                    self.sra(Self::xlen() - 1)
-                }
-                fn mul(self, rhs: Self) -> Self {
-                    self.wrapping_mul(rhs)
-                }
-                fn div(self, rhs: Self) -> Self {
-                    let lhs = self as $s;
-                    let rhs = rhs as $s;
-                    if rhs == 0 {
-                        !0
-                    } else {
-                        lhs.wrapping_div(rhs) as Self
-                    }
-                }
-                fn rem(self, rhs: Self) -> Self {
-                    let lhs = self as $s;
-                    let rhs = rhs as $s;
-                    if rhs == 0 {
-                        lhs as Self
-                    } else {
-                        lhs.wrapping_rem(rhs) as Self
-                    }
-                }
-                fn divu(self, rhs: Self) -> Self {
-                    if rhs == 0 {
-                        !0
-                    } else {
-                        self.wrapping_div(rhs)
-                    }
-                }
-                fn remu(self, rhs: Self) -> Self {
-                    if rhs == 0 {
-                        self
-                    } else {
-                        self.wrapping_rem(rhs)
-                    }
+    ($t:ty, $s:ty) => {
+        impl XlenT for $t {
+            fn xlen() -> u32 {
+                <$t>::BITS
+            }
+            fn add<T>(self, rhs: T) -> Self
+            where
+                Self: Cast<T>,
+            {
+                self.wrapping_add(<Self as Cast<T>>::from(rhs))
+            }
+            fn sub<T>(self, rhs: T) -> Self
+            where
+                Self: Cast<T>,
+            {
+                self.wrapping_sub(<Self as Cast<T>>::from(rhs))
+            }
+            #[cfg(feature = "RV64")]
+            fn trunc32(self) -> Self {
+                self as u32 as Self
+            }
+            #[cfg(feature = "RV64")]
+            fn sext32(self) -> Self {
+                self as i32 as Self
+            }
+            #[cfg(feature = "RV128")]
+            fn trunc64(self) -> Self {
+                self as u64 as Self
+            }
+            #[cfg(feature = "RV128")]
+            fn sext64(self) -> Self {
+                self as i64 as Self
+            }
+            fn scmp(self, rhs: Self) -> std::cmp::Ordering {
+                let lhs = self as $s;
+                let rhs = rhs as $s;
+                lhs.cmp(&rhs)
+            }
+            fn sra(self, shamt: u32) -> Self {
+                let lhs = self as $s;
+                (lhs >> shamt) as $t
+            }
+            #[cfg(feature = "RV128")]
+            fn sign_blast(self) -> Self {
+                self.sra(Self::xlen() - 1)
+            }
+            #[cfg(feature = "RV128")]
+            fn adc(self, rhs: Self, carry: bool) -> (Self, bool) {
+                let (res, c0) = self.overflowing_add(rhs);
+                let (res, c1) = res.overflowing_add(carry as $t);
+                (res, c0 || c1)
+            }
+            #[cfg(feature = "M")]
+            fn mul(self, rhs: Self) -> Self {
+                self.wrapping_mul(rhs)
+            }
+            #[cfg(feature = "M")]
+            fn div(self, rhs: Self) -> Self {
+                let lhs = self as $s;
+                let rhs = rhs as $s;
+                if rhs == 0 {
+                    !0
+                } else {
+                    lhs.wrapping_div(rhs) as Self
                 }
             }
-        )*
+            #[cfg(feature = "M")]
+            fn rem(self, rhs: Self) -> Self {
+                let lhs = self as $s;
+                let rhs = rhs as $s;
+                if rhs == 0 {
+                    lhs as Self
+                } else {
+                    lhs.wrapping_rem(rhs) as Self
+                }
+            }
+            #[cfg(feature = "M")]
+            fn divu(self, rhs: Self) -> Self {
+                if rhs == 0 {
+                    !0
+                } else {
+                    self.wrapping_div(rhs)
+                }
+            }
+            #[cfg(feature = "M")]
+            fn remu(self, rhs: Self) -> Self {
+                if rhs == 0 {
+                    self
+                } else {
+                    self.wrapping_rem(rhs)
+                }
+            }
+        }
     };
 }
 
-impl_cast!(u32, u64, u128);
-impl_xlen_t!(u32, i32, u64, i64, u128, i128);
+impl_cast!(u32);
+#[cfg(feature = "RV64")]
+impl_cast!(u64);
+#[cfg(feature = "RV128")]
+impl_cast!(u128);
+
+impl_xlen_t!(u32, i32);
+#[cfg(feature = "RV64")]
+impl_xlen_t!(u64, i64);
+#[cfg(feature = "RV128")]
+impl_xlen_t!(u128, i128);
 
 #[cfg(test)]
-mod xlenop_tests {
+mod tests {
     use super::*;
 
+    #[cfg(feature = "M")]
     #[test]
-    fn u32_xlenop() {
+    fn test_u32_mul() {
         let val1 = 0x80000000u32; // -2147483648
         let val2 = 0xffffffffu32; // -1
         let val3 = 0x7fffffffu32; // 2147483647
@@ -284,8 +335,9 @@ mod xlenop_tests {
 
     // u64 has same logic as u32
 
+    #[cfg(all(feature = "M", feature = "RV128"))]
     #[test]
-    fn u128_xlenop() {
+    fn test_u128_mul() {
         let val1 = 0x80000000000000000000000000000000u128;
         let val2 = 0xffffffffffffffffffffffffffffffffu128;
         let val3 = 0x7fffffffffffffffffffffffffffffffu128;

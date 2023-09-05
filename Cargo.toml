@@ -6,3 +6,49 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+
+[features]
+RV64 = []
+# RV128 = ["RV64"]
+# Atomic
+A = []
+# Bit-Manipulation
+# B = []
+# Compressed
+C = []
+# Double-Precision Floating-Point
+D = ["F"]
+# RV32E
+E = []
+# Single-Precision Floating-Point
+F = []
+# Dynamically Translated Languages
+# J = []
+# Decimal Floating-Point
+# L = []
+# Integer Multiply/Divide
+M = []
+# User-Level Interrupts
+# N = []
+# Packed-SIMD
+# P = []
+# Quad-Precision Floating-Point
+# Q = []
+# Transactional Memory
+# T = []
+# Vector
+# V = []
+# Misaligned Atomics
+# Zam = []
+# CSR instructions
+Zicsr = []
+# Instruction-Fetch Fence
+Zifencei = []
+# Total Store Ordering
+# Ztso = []
+
+# General
+G = ["M", "A", "F", "D", "Zicsr", "Zifencei"]
+default = ["RV64", "M", "A", "Zifencei", "E"]
+all = ["RV64", "G", "C", "E"]
+# all = []
