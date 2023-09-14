@@ -21,25 +21,11 @@ D = ["F"]
 # RV32E
 E = []
 # Single-Precision Floating-Point
-F = []
-# Dynamically Translated Languages
-# J = []
-# Decimal Floating-Point
-# L = []
+F = ["Zicsr"]
 # Integer Multiply/Divide
 M = []
-# User-Level Interrupts
-# N = []
-# Packed-SIMD
-# P = []
-# Quad-Precision Floating-Point
-# Q = []
-# Transactional Memory
-# T = []
 # Vector
 # V = []
-# Misaligned Atomics
-# Zam = []
 # CSR instructions
 Zicsr = []
 # Instruction-Fetch Fence
@@ -47,8 +33,6 @@ Zifencei = []
 # Total Store Ordering
 # Ztso = []
 
-# General
 G = ["M", "A", "F", "D", "Zicsr", "Zifencei"]
-default = ["RV64", "M", "A", "Zifencei", "E"]
+default = ["all"]
 all = ["RV64", "G", "C", "E"]
-# all = []

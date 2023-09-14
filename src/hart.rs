@@ -1,23 +1,19 @@
-use crate::xlen::XlenT;
-
-pub struct Hart<Xlen: XlenT> {
-    pub rfs: RegFiles<Xlen>,
-    pub pc: Xlen,
-    pub isa: HartIsa,
-}
+use crate::{fpu::Fpu, xlen::XlenT};
 
 #[repr(align(32))]
-pub struct RegFiles<Xlen: XlenT> {
+#[derive(Debug, Clone)]
+pub struct Hart<Xlen: XlenT, const EMB: bool> {
     gp: [Xlen; 32],
     #[cfg(feature = "F")]
-    fp: [[u8; 8]; 32],
-    #[cfg(feature = "V")]
-    vec: [[u8; 32]; 32],
+    pub fpu: Fpu<Xlen>,
+    pub pc: Xlen,
+    pub isa: HartIsa<Xlen, EMB>,
 }
 
 /// each flag corresponds to a feature in Cargo.toml
 #[allow(non_snake_case)]
-pub struct HartIsa {
+#[derive(Debug, Clone)]
+pub struct HartIsa<Xlen: XlenT, const EMB: bool> {
     /// Atomic
     #[cfg(feature = "A")]
     pub A: bool,
@@ -27,9 +23,6 @@ pub struct HartIsa {
     /// Double-precision floating-point
     #[cfg(feature = "D")]
     pub D: bool,
-    /// RV32E
-    #[cfg(feature = "E")]
-    pub E: bool,
     /// Single-precision floating-point
     #[cfg(feature = "F")]
     pub F: bool,
@@ -42,35 +35,9 @@ pub struct HartIsa {
     /// Instruction-Fetch Fence
     #[cfg(feature = "Zifencei")]
     pub Zifencei: bool,
+
+    xlen: std::marker::PhantomData<Xlen>,
 }
-
-// macro_rules! impl_isa_check {
-//     ($fname:ident, $flag:ident, $feature:literal) => {
-//         pub fn $fname(&self) -> bool {
-//             #[cfg(feature = $feature)]
-//             {
-//                 self.isa.$flag
-//             }
-//             #[cfg(not(feature = $feature))]
-//             {
-//                 false
-//             }
-//         }
-//     };
-// }
-
-// // impl_isa_check!(A, C, D, E, F, M, Zicsr, Zifencei);
-// #[allow(non_snake_case)]
-// impl<Xlen: XlenT> Hart<Xlen> {
-//     impl_isa_check!(has_A, A, "A");
-//     impl_isa_check!(has_C, C, "C");
-//     impl_isa_check!(has_D, D, "D");
-//     impl_isa_check!(has_E, E, "E");
-//     impl_isa_check!(has_F, F, "F");
-//     impl_isa_check!(has_M, M, "M");
-//     impl_isa_check!(has_Zicsr, Zicsr, "Zicsr");
-//     impl_isa_check!(has_Zifencei, Zifencei, "Zifencei");
-// }
 
 // impl<Xlen: XlenT> Hart<Xlen> {
 //     pub fn get_gp(&self, reg: u8) -> Xlen {

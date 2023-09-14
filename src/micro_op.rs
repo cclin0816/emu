@@ -1,15 +1,14 @@
-#[derive(Debug, Clone, Copy)]
-#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CmpCond {
-    Eq = 0,
-    Ne = 1,
-    Lt = 4,
-    Ge = 5,
-    LtU = 6,
-    GeU = 7,
+    Eq,
+    Ne,
+    Lt,
+    Ge,
+    LtU,
+    GeU,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MemWidth {
     B,
     H,
@@ -20,22 +19,24 @@ pub enum MemWidth {
     HU,
     #[cfg(feature = "RV64")]
     WU,
-    #[cfg(feature = "RV128")]
-    DU,
-    #[cfg(feature = "RV128")]
-    Q,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub enum MiscMemOps {
-    /// fence mode, pred & succ
-    Fence(u8, u8),
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FenceMode {
+    Normal,
+    Tso,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MiscMemOp {
+    /// pred & succ order
+    Fence(u8, FenceMode),
     #[cfg(feature = "Zifencei")]
     FenceI,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub enum Ops {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BinaryOp {
     Add,
     Sll,
     Slt,
@@ -56,8 +57,6 @@ pub enum Ops {
     SubW,
     #[cfg(feature = "RV64")]
     SraW,
-    // future 128
-    // bit 25 as +32
     #[cfg(feature = "M")]
     Mul,
     #[cfg(feature = "M")]
@@ -94,50 +93,144 @@ pub enum Ops {
     Min,
     #[cfg(feature = "A")]
     MinU,
-    #[cfg(feature = "A")]
-    MaxW,
-    #[cfg(feature = "A")]
-    MaxUW,
-    #[cfg(feature = "A")]
-    MinW,
-    #[cfg(feature = "A")]
-    MinUW,
+    // #[cfg(all(feature = "A", feature = "RV64"))]
+    // MaxW,
+    // #[cfg(all(feature = "A", feature = "RV64"))]
+    // MaxUW,
+    // #[cfg(all(feature = "A", feature = "RV64"))]
+    // MinW,
+    // #[cfg(all(feature = "A", feature = "RV64"))]
+    // MinUW,
 }
 
 #[cfg(feature = "A")]
-#[derive(Debug, Clone, Copy)]
-#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MemOrder {
-    Relaxed = 0,
-    Release = 1,
-    Acquire = 2,
-    AcqRel = 3,
+    Relaxed,
+    Release,
+    Acquire,
+    AcqRel,
 }
 
 #[cfg(feature = "Zicsr")]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CsrOp {
     Rw,
     Rs,
     Rc,
     Rwi,
-    Rws,
-    Rwc,
+    Rsi,
+    Rci,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub enum Instr {
-    Undecoded,
-    Invalid,
-    Reserved,
-    Hint,
-    Nop,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Exception {
+    AddrMisalign(MemProtect),
+    AccessFault(MemProtect),
+    PageFault(MemProtect),
+    IllegalInstr,
     Ecall,
     Ebreak,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MemProtect {
+    R,
+    W,
+    X,
+}
+
+#[cfg(feature = "F")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Precision {
+    S,
+    #[cfg(feature = "D")]
+    D,
+}
+
+#[cfg(feature = "F")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RoundMode {
+    Rne,
+    Rtz,
+    Rdn,
+    Rup,
+    Rmm,
+    Dyn,
+    None,
+}
+
+#[cfg(feature = "F")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FpTenaryOp {
+    MAdd,
+    MSub,
+    NMSub,
+    NMAdd,
+}
+
+#[cfg(feature = "F")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FpBinaryOp {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    SgnJ,
+    SgnJN,
+    SgnJX,
+    Min,
+    Max,
+}
+
+#[cfg(feature = "F")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FpUnaryOp {
+    Sqrt,
+}
+
+#[cfg(feature = "F")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FpCmpCond {
+    Eq,
+    Lt,
+    Le,
+}
+
+#[cfg(feature = "F")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FpGpOp {
+    W,
+    WU,
+    #[cfg(feature = "RV64")]
+    L,
+    #[cfg(feature = "RV64")]
+    LU,
+    MV,
+    Class,
+}
+
+#[cfg(feature = "F")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GpFpOp {
+    W,
+    WU,
+    #[cfg(feature = "RV64")]
+    L,
+    #[cfg(feature = "RV64")]
+    LU,
+    MV,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Instr {
+    Undecoded,
+    Nop,
+    Trap(Exception),
     /// rd, rs1, imm
-    OpImm(u8, u8, i32, Ops),
+    OpImm(u8, u8, i32, BinaryOp),
     /// rd, rs1, rs2
-    Op(u8, u8, u8, Ops),
+    Op(u8, u8, u8, BinaryOp),
     /// rd, imm
     Auipc(u8, i32),
     /// rd, imm
@@ -146,7 +239,7 @@ pub enum Instr {
     Load(u8, u8, i32, MemWidth),
     /// rs1, rs2, offset
     Store(u8, u8, i32, MemWidth),
-    MiscMem(MiscMemOps),
+    MiscMem(MiscMemOp),
     /// rs1, rs2, offset
     Branch(u8, u8, i32, CmpCond),
     /// rd, offset
@@ -164,5 +257,32 @@ pub enum Instr {
     StoreConditional(u8, u8, u8, MemOrder, MemWidth),
     /// rd, rs1, rs2
     #[cfg(feature = "A")]
-    Amo(u8, u8, u8, MemOrder, MemWidth, Ops),
+    Amo(u8, u8, u8, MemOrder, MemWidth, BinaryOp),
+    /// rd, rs1, imm
+    #[cfg(feature = "F")]
+    LoadFp(u8, u8, i32, Precision),
+    /// rs1, rs2, imm
+    #[cfg(feature = "F")]
+    StoreFp(u8, u8, i32, Precision),
+    /// rd, rs1, rs2, rs3
+    #[cfg(feature = "F")]
+    FpOp3(u8, u8, u8, u8, RoundMode, Precision, FpTenaryOp),
+    /// rd, rs1, rs2
+    #[cfg(feature = "F")]
+    FpOp2(u8, u8, u8, RoundMode, Precision, FpBinaryOp),
+    /// rd, s1
+    #[cfg(feature = "F")]
+    FpOp(u8, u8, RoundMode, Precision, FpUnaryOp),
+    /// rd, rs1
+    #[cfg(feature = "F")]
+    FpCvtGp(u8, u8, RoundMode, Precision, FpGpOp),
+    /// rd, rs1
+    #[cfg(feature = "F")]
+    GpCvtFp(u8, u8, RoundMode, Precision, GpFpOp),
+    /// rd, rs1, rs2
+    #[cfg(feature = "F")]
+    FpCmp(u8, u8, u8, Precision, FpCmpCond),
+    /// rd, rs1  from_precision, to_precision
+    #[cfg(feature = "D")]
+    FpCvtFp(u8, u8, RoundMode, Precision, Precision),
 }
