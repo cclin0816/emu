@@ -6,7 +6,7 @@
 mod decode;
 mod fpu;
 mod hart;
-mod micro_op;
+mod uop;
 mod utils;
 mod xlen;
 mod xqt;

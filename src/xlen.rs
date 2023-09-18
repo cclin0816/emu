@@ -1,5 +1,4 @@
-// abstracts xlen out of emulator logic
-
+/// same as using `as` keyword
 pub trait Cast<T>: Sized {
     fn from(value: T) -> Self;
     fn into(self) -> T;
@@ -19,7 +18,7 @@ pub trait CastPrimitive:
 {
 }
 
-macro_rules! impl_cast_primitive {
+macro_rules! impl_cast {
     ($t:ty, $($u:ty),*) => {
         $(
             impl Cast<$u> for $t {
@@ -31,16 +30,17 @@ macro_rules! impl_cast_primitive {
                 }
             }
         )*
+    };
+}
+
+macro_rules! impl_cast_primitive {
+    ($t:ty) => {
+        impl_cast!($t, u8, u16, u32, u64, u128, i8, i16, i32, i64, i128);
         impl CastPrimitive for $t {}
     };
 }
 
-macro_rules! impl_cast {
-    ($t:ty) => {
-        impl_cast_primitive!($t, u8, u16, u32, u64, u128, i8, i16, i32, i64, i128);
-    };
-}
-
+/// trait for xlen operations that differ between xlens
 pub trait XlenOp: Sized {
     /// high parts for signed * signed
     #[cfg(feature = "M")]
@@ -96,13 +96,14 @@ impl XlenOp for u64 {
     }
 }
 
+/// -> (low, high)
 #[cfg(all(feature = "M", feature = "RV128"))]
-fn u256_mul(al: u128, ah: u128, bl: u128, bh: u128) -> (u128, u128) {
-    let res0 = al.wrapping_mul(bl);
-    let res1 = ah
-        .wrapping_mul(bl)
-        .wrapping_add(al.wrapping_mul(bh))
-        .wrapping_add(al.mulhu(bl));
+fn u256_mul(lhs_low: u128, lhs_high: u128, rhs_low: u128, rhs_high: u128) -> (u128, u128) {
+    let res0 = lhs_low.wrapping_mul(rhs_low);
+    let res1 = lhs_high
+        .wrapping_mul(rhs_low)
+        .wrapping_add(lhs_low.wrapping_mul(rhs_high))
+        .wrapping_add(lhs_low.mulhu(rhs_low));
     (res0, res1)
 }
 
@@ -143,6 +144,9 @@ impl XlenOp for u128 {
     }
 }
 
+/// abstracts xlen (rv32, rv64, rv128) out of emulator logic\
+/// so emulator runs on XlenT trait instead of concrete types\
+/// implements all ALU operations required by riscv spec
 pub trait XlenT:
     Sized
     + Copy
@@ -159,7 +163,7 @@ pub trait XlenT:
     + Cast<Self>
     + XlenOp
 {
-    fn xlen() -> u32;
+    const XLEN: u32;
     fn add<T>(self, rhs: T) -> Self
     where
         Self: Cast<T>;
@@ -182,7 +186,7 @@ pub trait XlenT:
     fn scmp(self, rhs: Self) -> std::cmp::Ordering;
     /// shift right arithmetic
     fn sra(self, shamt: u32) -> Self;
-    /// signed-self >= 0 ? 0 : -1;
+    /// signed-self >= 0 ? 0 : !0;
     #[cfg(feature = "RV128")]
     fn sign_blast(self) -> Self;
     /// carrying_add in nightly feature
@@ -200,12 +204,12 @@ pub trait XlenT:
     fn remu(self, rhs: Self) -> Self;
 }
 
+/// implements XlenT trait for xlen\
+/// implements operations that have same logic for all xlens
 macro_rules! impl_xlen_t {
     ($t:ty, $s:ty) => {
         impl XlenT for $t {
-            fn xlen() -> u32 {
-                <$t>::BITS
-            }
+            const XLEN: u32 = <$t>::BITS;
             fn add<T>(self, rhs: T) -> Self
             where
                 Self: Cast<T>,
@@ -245,7 +249,7 @@ macro_rules! impl_xlen_t {
             }
             #[cfg(feature = "RV128")]
             fn sign_blast(self) -> Self {
-                self.sra(Self::xlen() - 1)
+                self.sra(Self::XLEN - 1)
             }
             #[cfg(feature = "RV128")]
             fn adc(self, rhs: Self, carry: bool) -> (Self, bool) {
@@ -297,11 +301,11 @@ macro_rules! impl_xlen_t {
     };
 }
 
-impl_cast!(u32);
+impl_cast_primitive!(u32);
 #[cfg(feature = "RV64")]
-impl_cast!(u64);
+impl_cast_primitive!(u64);
 #[cfg(feature = "RV128")]
-impl_cast!(u128);
+impl_cast_primitive!(u128);
 
 impl_xlen_t!(u32, i32);
 #[cfg(feature = "RV64")]
@@ -315,7 +319,7 @@ mod tests {
 
     #[cfg(feature = "M")]
     #[test]
-    fn test_u32_mul() {
+    fn u32_mul() {
         let val1 = 0x80000000u32; // -2147483648
         let val2 = 0xffffffffu32; // -1
         let val3 = 0x7fffffffu32; // 2147483647
@@ -337,7 +341,7 @@ mod tests {
 
     #[cfg(all(feature = "M", feature = "RV128"))]
     #[test]
-    fn test_u128_mul() {
+    fn u128_mul() {
         let val1 = 0x80000000000000000000000000000000u128;
         let val2 = 0xffffffffffffffffffffffffffffffffu128;
         let val3 = 0x7fffffffffffffffffffffffffffffffu128;

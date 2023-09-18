@@ -1,4 +1,4 @@
-mod ops;
+mod alu;
 
 // impl Instr {
 //     pub fn exec<Xlen: XlenT>(&mut self, hart: &mut Hart<Xlen>) {

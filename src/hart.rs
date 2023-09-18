@@ -10,9 +10,10 @@ pub struct Hart<Xlen: XlenT, const EMB: bool> {
     pub isa: HartIsa<Xlen, EMB>,
 }
 
-/// each flag corresponds to a feature in Cargo.toml
+/// each flag corresponds to a feature in Cargo.toml\
+/// act as a fast query misa register
 #[allow(non_snake_case)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct HartIsa<Xlen: XlenT, const EMB: bool> {
     /// Atomic
     #[cfg(feature = "A")]

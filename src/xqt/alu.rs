@@ -1,5 +1,5 @@
 use crate::{
-    micro_op::{CmpCond, BinaryOp},
+    uop::{BinaryOp, CmpCond},
     xlen::XlenT,
 };
 use std::cmp::Ordering;
@@ -23,7 +23,7 @@ impl BinaryOp {
             BinaryOp::Add => lhs.add(rhs),
             BinaryOp::Sll => {
                 let shamt: u32 = rhs.into();
-                lhs << (shamt % Xlen::xlen())
+                lhs << (shamt % Xlen::XLEN)
             }
             BinaryOp::Slt => {
                 if lhs.scmp(rhs) == Ordering::Less {
@@ -42,14 +42,14 @@ impl BinaryOp {
             BinaryOp::Xor => lhs ^ rhs,
             BinaryOp::Srl => {
                 let shamt: u32 = rhs.into();
-                lhs >> (shamt % Xlen::xlen())
+                lhs >> (shamt % Xlen::XLEN)
             }
             BinaryOp::Or => lhs | rhs,
             BinaryOp::And => lhs & rhs,
             BinaryOp::Sub => lhs.sub(rhs),
             BinaryOp::Sra => {
                 let shamt: u32 = rhs.into();
-                lhs.sra(shamt % Xlen::xlen())
+                lhs.sra(shamt % Xlen::XLEN)
             }
             #[cfg(feature = "RV64")]
             BinaryOp::AddW => lhs.add(rhs).sext32(),
@@ -139,30 +139,6 @@ impl BinaryOp {
             }
             #[cfg(feature = "A")]
             BinaryOp::MinU => lhs.min(rhs),
-            // #[cfg(all(feature = "A", feature = "RV64"))]
-            // BinaryOp::MaxW => {
-            //     let lhs: i32 = lhs.into();
-            //     let rhs: i32 = rhs.into();
-            //     Xlen::from(lhs.max(rhs))
-            // }
-            // #[cfg(all(feature = "A", feature = "RV64"))]
-            // BinaryOp::MaxUW => {
-            //     let lhs: u32 = lhs.into();
-            //     let rhs: u32 = rhs.into();
-            //     Xlen::from(lhs.max(rhs)).sext32()
-            // }
-            // #[cfg(all(feature = "A", feature = "RV64"))]
-            // BinaryOp::MinW => {
-            //     let lhs: i32 = lhs.into();
-            //     let rhs: i32 = rhs.into();
-            //     Xlen::from(lhs.min(rhs))
-            // }
-            // #[cfg(all(feature = "A", feature = "RV64"))]
-            // BinaryOp::MinUW => {
-            //     let lhs: u32 = lhs.into();
-            //     let rhs: u32 = rhs.into();
-            //     Xlen::from(lhs.min(rhs)).sext32()
-            // }
         }
     }
 }

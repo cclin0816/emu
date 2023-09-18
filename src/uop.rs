@@ -1,3 +1,5 @@
+use std::default;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CmpCond {
     Eq,
@@ -29,10 +31,17 @@ pub enum FenceMode {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MiscMemOp {
-    /// pred & succ order
-    Fence(u8, FenceMode),
+    /// (pred, succ, ...)
+    Fence(u8, u8, FenceMode),
     #[cfg(feature = "Zifencei")]
     FenceI,
+}
+
+impl MiscMemOp {
+    pub const FENCE_W: u8 = 1 << 0;
+    pub const FENCE_R: u8 = 1 << 1;
+    pub const FENCE_I: u8 = 1 << 2;
+    pub const FENCE_O: u8 = 1 << 3;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -83,6 +92,7 @@ pub enum BinaryOp {
     RemW,
     #[cfg(all(feature = "M", feature = "RV64"))]
     RemUW,
+    /// used for amo swap
     #[cfg(feature = "A")]
     Second,
     #[cfg(feature = "A")]
@@ -93,14 +103,6 @@ pub enum BinaryOp {
     Min,
     #[cfg(feature = "A")]
     MinU,
-    // #[cfg(all(feature = "A", feature = "RV64"))]
-    // MaxW,
-    // #[cfg(all(feature = "A", feature = "RV64"))]
-    // MaxUW,
-    // #[cfg(all(feature = "A", feature = "RV64"))]
-    // MinW,
-    // #[cfg(all(feature = "A", feature = "RV64"))]
-    // MinUW,
 }
 
 #[cfg(feature = "A")]
@@ -162,7 +164,7 @@ pub enum RoundMode {
 
 #[cfg(feature = "F")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FpTenaryOp {
+pub enum FpTernaryOp {
     MAdd,
     MSub,
     NMSub,
@@ -222,67 +224,99 @@ pub enum GpFpOp {
     MV,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Instr {
+    #[default]
     Undecoded,
+
     Nop,
     Trap(Exception),
-    /// rd, rs1, imm
+    /// (gp-rd, gp-rs1, imm, ...)
     OpImm(u8, u8, i32, BinaryOp),
-    /// rd, rs1, rs2
+    /// (gp-rd, gp-rs1, gp-rs2, ...)
     Op(u8, u8, u8, BinaryOp),
-    /// rd, imm
+    /// (gp-rd, imm)
     Auipc(u8, i32),
-    /// rd, imm
-    Lui(u8, i32),
-    /// rd, rs1, offset
+    /// (gp-rd, gp-rs1, offset, ...)
     Load(u8, u8, i32, MemWidth),
-    /// rs1, rs2, offset
+    /// (gp-rs1, gp-rs2, offset, ...)
     Store(u8, u8, i32, MemWidth),
     MiscMem(MiscMemOp),
-    /// rs1, rs2, offset
+    /// (gp-rs1, gp-rs2, offset, ...)
     Branch(u8, u8, i32, CmpCond),
-    /// rd, offset
+    /// (gp-rd, offset, ...)
     Jal(u8, i32),
-    /// rd, rs1, offset
+    /// (gp-rd, gp-rs1, offset, ...)
     Jalr(u8, u8, i32),
-    /// rd, rs1 / uimm, addr
+    /// (gp-rd, gp-rs1 / uimm, csr_addr, ...)
     #[cfg(feature = "Zicsr")]
     Csr(u8, u8, u16, CsrOp),
-    /// rd, rs1
+
+    /// (gp-rd, gp-rs1, ...)
     #[cfg(feature = "A")]
     LoadReserved(u8, u8, MemOrder, MemWidth),
-    /// rd, rs1, rs2
+    /// (gp-rd, gp-rs1, gp-rs2, ...)
     #[cfg(feature = "A")]
     StoreConditional(u8, u8, u8, MemOrder, MemWidth),
-    /// rd, rs1, rs2
+    /// (gp-rd, gp-rs1, gp-rs2, ...)
     #[cfg(feature = "A")]
     Amo(u8, u8, u8, MemOrder, MemWidth, BinaryOp),
-    /// rd, rs1, imm
+
+    /// (fp-rd, gp-rs1, offset, ...)
     #[cfg(feature = "F")]
     LoadFp(u8, u8, i32, Precision),
-    /// rs1, rs2, imm
+    /// (gp-rs1, fp-rs2, offset, ...)
     #[cfg(feature = "F")]
     StoreFp(u8, u8, i32, Precision),
-    /// rd, rs1, rs2, rs3
+    /// (fp-rd, fp-rs1, fp-rs2, fp-rs3, ...)
     #[cfg(feature = "F")]
-    FpOp3(u8, u8, u8, u8, RoundMode, Precision, FpTenaryOp),
-    /// rd, rs1, rs2
+    FpOp3(u8, u8, u8, u8, RoundMode, Precision, FpTernaryOp),
+    /// (fp-rd, fp-rs1, fp-rs2, ...)
     #[cfg(feature = "F")]
     FpOp2(u8, u8, u8, RoundMode, Precision, FpBinaryOp),
-    /// rd, s1
+    /// (fp-rd, fp-rs1, ...)
     #[cfg(feature = "F")]
     FpOp(u8, u8, RoundMode, Precision, FpUnaryOp),
-    /// rd, rs1
+    /// (gp-rd, fp-rs1, ...)
     #[cfg(feature = "F")]
     FpCvtGp(u8, u8, RoundMode, Precision, FpGpOp),
-    /// rd, rs1
+    /// (fp-rd, gp-rs1, ...)
     #[cfg(feature = "F")]
     GpCvtFp(u8, u8, RoundMode, Precision, GpFpOp),
-    /// rd, rs1, rs2
+    /// (gp-rd, fp-rs1, fp-rs2, ...)
     #[cfg(feature = "F")]
     FpCmp(u8, u8, u8, Precision, FpCmpCond),
-    /// rd, rs1  from_precision, to_precision
+    /// (fp-rd, fp-rs1, round_mode, from_precision, to_precision)
     #[cfg(feature = "D")]
     FpCvtFp(u8, u8, RoundMode, Precision, Precision),
+
+    #[cfg(feature = "C")]
+    CTrap(Exception),
+    /// (gp-rd, gp-rs1, imm, ...)
+    #[cfg(feature = "C")]
+    COpImm(u8, u8, i32, BinaryOp),
+    /// (gp-rd & gp-rs1, gp-rs2, ...)
+    #[cfg(feature = "C")]
+    COp(u8, u8, BinaryOp),
+    /// (gp-rd, gp-rs1, offset, ...)
+    #[cfg(feature = "C")]
+    CLoad(u8, u8, i32, MemWidth),
+    /// (gp-rs1, gp-rs2, offset, ...)
+    #[cfg(feature = "C")]
+    CStore(u8, u8, i32, MemWidth),
+    /// (gp-rs1, offset, ...)
+    #[cfg(feature = "C")]
+    CBranch(u8, i32, CmpCond),
+    /// (gp-rd, offset)
+    #[cfg(feature = "C")]
+    CJal(u8, i32),
+    /// (gp-rd, gp-rs1)
+    #[cfg(feature = "C")]
+    CJalr(u8, u8),
+    /// (gp-rd, fp-rs1, offset, ...)
+    #[cfg(all(feature = "C", feature = "F"))]
+    CLoadFp(u8, u8, i32, Precision),
+    /// (gp-rs1, fp-rs2, offset, ...)
+    #[cfg(all(feature = "C", feature = "F"))]
+    CStoreFp(u8, u8, i32, Precision),
 }
