@@ -9,7 +9,7 @@ edition = "2021"
 
 [features]
 RV64 = []
-RV128 = ["RV64"]
+RV128 = ["RV64"] # still broken
 # Atomic
 A = []
 # Bit-Manipulation
@@ -19,7 +19,7 @@ C = []
 # Double-Precision Floating-Point
 D = ["F"]
 # RV32E
-E = []
+E = [] # still broken
 # Single-Precision Floating-Point
 F = ["Zicsr"]
 # Integer Multiply/Divide

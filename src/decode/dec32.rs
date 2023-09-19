@@ -116,10 +116,98 @@ fn round_mode(fn3: u8) -> Maybe<RoundMode> {
     })
 }
 
-impl<Xlen: XlenT, const EMB: bool> HartIsa<Xlen, EMB> {
+fn dec32_auipc(ins: u32) -> Maybe<Instr> {
+    let (rd, imm) = u_type(ins);
+    Ok(Instr::Auipc(rd, imm))
+}
+
+fn dec32_lui(ins: u32) -> Maybe<Instr> {
+    let (rd, imm) = u_type(ins);
+    Ok(Instr::OpImm(rd, ZERO, imm, BinaryOp::Add))
+}
+
+#[cfg(feature = "F")]
+fn dec32_fp_op2(ins: u32, pr: Precision, op: FpBinaryOp) -> Maybe<Instr> {
+    let (rd, fn3, rs1, rs2, _) = r_type(ins);
+    let rm = round_mode(fn3)?;
+    Ok(Instr::FpOp2(rd, rs1, rs2, rm, pr, op))
+}
+
+#[cfg(feature = "F")]
+fn dec32_fp_sgnj(ins: u32, pr: Precision) -> Maybe<Instr> {
+    let (rd, fn3, rs1, rs2, _) = r_type(ins);
+    let op = match fn3 {
+        0b000 => FpBinaryOp::SgnJ,
+        0b001 => FpBinaryOp::SgnJN,
+        0b010 => FpBinaryOp::SgnJX,
+        _ => return Err(()),
+    };
+    Ok(Instr::FpOp2(rd, rs1, rs2, RoundMode::None, pr, op))
+}
+
+#[cfg(feature = "F")]
+fn dec32_fp_minmax(ins: u32, pr: Precision) -> Maybe<Instr> {
+    let (rd, fn3, rs1, rs2, _) = r_type(ins);
+    let op = match fn3 {
+        0b000 => FpBinaryOp::Min,
+        0b001 => FpBinaryOp::Max,
+        _ => return Err(()),
+    };
+    Ok(Instr::FpOp2(rd, rs1, rs2, RoundMode::None, pr, op))
+}
+
+#[cfg(feature = "F")]
+fn dec32_fp_op(ins: u32, pr: Precision, op: FpUnaryOp) -> Maybe<Instr> {
+    let (rd, fn3, rs1, rs2, _) = r_type(ins);
+    let rm = round_mode(fn3)?;
+    if rs2 != 0 {
+        return Err(());
+    }
+    Ok(Instr::FpOp(rd, rs1, rm, pr, op))
+}
+
+#[cfg(feature = "F")]
+fn dec32_fp_cmp(ins: u32, pr: Precision) -> Maybe<Instr> {
+    let (rd, fn3, rs1, rs2, _) = r_type(ins);
+    let cond = match fn3 {
+        0b000 => FpCmpCond::Le,
+        0b001 => FpCmpCond::Lt,
+        0b010 => FpCmpCond::Eq,
+        _ => return Err(()),
+    };
+    Ok(Instr::FpCmp(rd, rs1, rs2, pr, cond))
+}
+
+fn dec32_branch(ins: u32) -> Maybe<Instr> {
+    let (fn3, rs1, rs2, imm) = b_type(ins);
+    let cond = match fn3 {
+        0b000 => CmpCond::Eq,
+        0b001 => CmpCond::Ne,
+        0b100 => CmpCond::Lt,
+        0b101 => CmpCond::Ge,
+        0b110 => CmpCond::LtU,
+        0b111 => CmpCond::GeU,
+        _ => return Err(()),
+    };
+    Ok(Instr::Branch(rs1, rs2, imm, cond))
+}
+
+fn dec32_jalr(ins: u32) -> Maybe<Instr> {
+    let (rd, fn3, rs1, imm) = i_type(ins);
+    if fn3 != 0 {
+        return Err(());
+    }
+    Ok(Instr::Jalr(rd, rs1, imm))
+}
+
+fn dec32_jal(ins: u32) -> Maybe<Instr> {
+    let (rd, imm) = j_type(ins);
+    Ok(Instr::Jal(rd, imm))
+}
+
+impl<Xlen: XlenT> HartIsa<Xlen> {
     fn dec32_load(ins: u32) -> Maybe<Instr> {
         let (rd, fn3, rs1, imm) = i_type(ins);
-        check_gp_regs!(rd, rs1);
         let mem_width = match fn3 {
             0b000 => MemWidth::B,
             0b001 => MemWidth::H,
@@ -146,7 +234,6 @@ impl<Xlen: XlenT, const EMB: bool> HartIsa<Xlen, EMB> {
     fn dec32_load_fp(&self, ins: u32) -> Maybe<Instr> {
         if_ext_f!(self, {
             let (rd, fn3, rs1, imm) = i_type(ins);
-            check_gp_regs!(rs1);
             let pr = self.dec32_ls_pr(fn3)?;
             Instr::LoadFp(rd, rs1, imm, pr)
         })
@@ -174,7 +261,6 @@ impl<Xlen: XlenT, const EMB: bool> HartIsa<Xlen, EMB> {
 
     fn dec32_op_imm(ins: u32) -> Maybe<Instr> {
         let (rd, fn3, rs1, mut imm) = i_type(ins);
-        check_gp_regs!(rd, rs1);
         let op = match fn3 {
             0b000 => BinaryOp::Add,
             0b001 => sl_imm(imm, Xlen::XLEN)?,
@@ -189,16 +275,9 @@ impl<Xlen: XlenT, const EMB: bool> HartIsa<Xlen, EMB> {
         Ok(Instr::OpImm(rd, rs1, imm, op))
     }
 
-    fn dec32_auipc(ins: u32) -> Maybe<Instr> {
-        let (rd, imm) = u_type(ins);
-        check_gp_regs!(rd);
-        Ok(Instr::Auipc(rd, imm))
-    }
-
     fn dec32_op_imm_32(ins: u32) -> Maybe<Instr> {
         if_ge_rv64!({
             let (rd, fn3, rs1, mut imm) = i_type(ins);
-            check_gp_regs!(rd, rs1);
             let op = match fn3 {
                 0b000 => BinaryOp::AddW,
                 0b001 => {
@@ -218,7 +297,6 @@ impl<Xlen: XlenT, const EMB: bool> HartIsa<Xlen, EMB> {
 
     fn dec32_store(ins: u32) -> Maybe<Instr> {
         let (fn3, rs1, rs2, imm) = s_type(ins);
-        check_gp_regs!(rs1, rs2);
         let mem_width = match fn3 {
             0b000 => MemWidth::B,
             0b001 => MemWidth::H,
@@ -232,7 +310,6 @@ impl<Xlen: XlenT, const EMB: bool> HartIsa<Xlen, EMB> {
     fn dec32_store_fp(&self, ins: u32) -> Maybe<Instr> {
         if_ext_f!(self, {
             let (fn3, rs1, rs2, imm) = s_type(ins);
-            check_gp_regs!(rs1);
             let pr = self.dec32_ls_pr(fn3)?;
             Instr::StoreFp(rs1, rs2, imm, pr)
         })
@@ -241,7 +318,6 @@ impl<Xlen: XlenT, const EMB: bool> HartIsa<Xlen, EMB> {
     fn dec32_amo(&self, ins: u32) -> Maybe<Instr> {
         if_ext_a!(self, {
             let (rd, fn3, rs1, rs2, fn2, fn5) = r4_type(ins);
-            check_gp_regs!(rd, rs1, rs2);
             let mem_width = match fn3 {
                 0b010 => MemWidth::W,
                 0b011 => if_ge_rv64!(MemWidth::D)?,
@@ -280,7 +356,6 @@ impl<Xlen: XlenT, const EMB: bool> HartIsa<Xlen, EMB> {
 
     fn dec32_op(&self, ins: u32) -> Maybe<Instr> {
         let (rd, fn3, rs1, rs2, fn7) = r_type(ins);
-        check_gp_regs!(rd, rs1, rs2);
         let op = match fn7 {
             0b0000000 => match fn3 {
                 0b000 => BinaryOp::Add,
@@ -316,16 +391,9 @@ impl<Xlen: XlenT, const EMB: bool> HartIsa<Xlen, EMB> {
         Ok(Instr::Op(rd, rs1, rs2, op))
     }
 
-    fn dec32_lui(ins: u32) -> Maybe<Instr> {
-        let (rd, imm) = u_type(ins);
-        check_gp_regs!(rd);
-        Ok(Instr::OpImm(rd, 0, imm, BinaryOp::Add))
-    }
-
     fn dec32_op_32(&self, ins: u32) -> Maybe<Instr> {
         if_ge_rv64!({
             let (rd, fn3, rs1, rs2, fn7) = r_type(ins);
-            check_gp_regs!(rd, rs1, rs2);
             let op = match fn7 {
                 0b0000000 => match fn3 {
                     0b000 => BinaryOp::AddW,
@@ -387,36 +455,6 @@ impl<Xlen: XlenT, const EMB: bool> HartIsa<Xlen, EMB> {
         if_ext_f!(self, self.dec32_fp_op3(ins, FpTernaryOp::NMAdd)?)
     }
 
-    #[cfg(feature = "F")]
-    fn dec32_fp_op2(ins: u32, pr: Precision, op: FpBinaryOp) -> Maybe<Instr> {
-        let (rd, fn3, rs1, rs2, _) = r_type(ins);
-        let rm = round_mode(fn3)?;
-        Ok(Instr::FpOp2(rd, rs1, rs2, rm, pr, op))
-    }
-
-    #[cfg(feature = "F")]
-    fn dec32_fp_sgnj(ins: u32, pr: Precision) -> Maybe<Instr> {
-        let (rd, fn3, rs1, rs2, _) = r_type(ins);
-        let op = match fn3 {
-            0b000 => FpBinaryOp::SgnJ,
-            0b001 => FpBinaryOp::SgnJN,
-            0b010 => FpBinaryOp::SgnJX,
-            _ => return Err(()),
-        };
-        Ok(Instr::FpOp2(rd, rs1, rs2, RoundMode::None, pr, op))
-    }
-
-    #[cfg(feature = "F")]
-    fn dec32_fp_minmax(ins: u32, pr: Precision) -> Maybe<Instr> {
-        let (rd, fn3, rs1, rs2, _) = r_type(ins);
-        let op = match fn3 {
-            0b000 => FpBinaryOp::Min,
-            0b001 => FpBinaryOp::Max,
-            _ => return Err(()),
-        };
-        Ok(Instr::FpOp2(rd, rs1, rs2, RoundMode::None, pr, op))
-    }
-
     #[cfg(feature = "D")]
     fn dec32_fp_cvt_fp(&self, ins: u32, pr: Precision) -> Maybe<Instr> {
         let (rd, fn3, rs1, rs2, _) = r_type(ins);
@@ -426,31 +464,8 @@ impl<Xlen: XlenT, const EMB: bool> HartIsa<Xlen, EMB> {
     }
 
     #[cfg(feature = "F")]
-    fn dec32_fp_op(ins: u32, pr: Precision, op: FpUnaryOp) -> Maybe<Instr> {
-        let (rd, fn3, rs1, rs2, _) = r_type(ins);
-        let rm = round_mode(fn3)?;
-        if rs2 != 0 {
-            return Err(());
-        }
-        Ok(Instr::FpOp(rd, rs1, rm, pr, op))
-    }
-
-    #[cfg(feature = "F")]
-    fn dec32_fp_cmp(ins: u32, pr: Precision) -> Maybe<Instr> {
-        let (rd, fn3, rs1, rs2, _) = r_type(ins);
-        let cond = match fn3 {
-            0b000 => FpCmpCond::Le,
-            0b001 => FpCmpCond::Lt,
-            0b010 => FpCmpCond::Eq,
-            _ => return Err(()),
-        };
-        Ok(Instr::FpCmp(rd, rs1, rs2, pr, cond))
-    }
-
-    #[cfg(feature = "F")]
     fn dec32_fp_cvt_gp(ins: u32, pr: Precision) -> Maybe<Instr> {
         let (rd, fn3, rs1, rs2, _) = r_type(ins);
-        check_gp_regs!(rd);
         let rm = round_mode(fn3)?;
         let op = match rs2 {
             0b00 => FpGpOp::W,
@@ -465,7 +480,6 @@ impl<Xlen: XlenT, const EMB: bool> HartIsa<Xlen, EMB> {
     #[cfg(feature = "F")]
     fn dec32_gp_cvt_fp(ins: u32, pr: Precision) -> Maybe<Instr> {
         let (rd, fn3, rs1, rs2, _) = r_type(ins);
-        check_gp_regs!(rs1);
         let rm = round_mode(fn3)?;
         let op = match rs2 {
             0b00 => GpFpOp::W,
@@ -489,7 +503,6 @@ impl<Xlen: XlenT, const EMB: bool> HartIsa<Xlen, EMB> {
     #[cfg(feature = "F")]
     fn dec32_fp_mv_gp(ins: u32, pr: Precision) -> Maybe<Instr> {
         let (rd, fn3, rs1, rs2, _) = r_type(ins);
-        check_gp_regs!(rd);
         if rs2 != 0 {
             return Err(());
         }
@@ -507,7 +520,6 @@ impl<Xlen: XlenT, const EMB: bool> HartIsa<Xlen, EMB> {
     #[cfg(feature = "F")]
     fn dec32_gp_mv_fp(ins: u32, pr: Precision) -> Maybe<Instr> {
         let (rd, fn3, rs1, rs2, _) = r_type(ins);
-        check_gp_regs!(rs1);
         if fn3 != 0 || rs2 != 0 {
             return Err(());
         }
@@ -519,15 +531,15 @@ impl<Xlen: XlenT, const EMB: bool> HartIsa<Xlen, EMB> {
         if_ext_f!(self, {
             let pr = self.dec32_fp_pr(fn2(ins))?;
             match rs3(ins) {
-                0b0_0000 => Self::dec32_fp_op2(ins, pr, FpBinaryOp::Add),
-                0b0_0001 => Self::dec32_fp_op2(ins, pr, FpBinaryOp::Sub),
-                0b0_0010 => Self::dec32_fp_op2(ins, pr, FpBinaryOp::Mul),
-                0b0_0011 => Self::dec32_fp_op2(ins, pr, FpBinaryOp::Div),
-                0b0_0100 => Self::dec32_fp_sgnj(ins, pr),
-                0b0_0101 => Self::dec32_fp_minmax(ins, pr),
+                0b0_0000 => dec32_fp_op2(ins, pr, FpBinaryOp::Add),
+                0b0_0001 => dec32_fp_op2(ins, pr, FpBinaryOp::Sub),
+                0b0_0010 => dec32_fp_op2(ins, pr, FpBinaryOp::Mul),
+                0b0_0011 => dec32_fp_op2(ins, pr, FpBinaryOp::Div),
+                0b0_0100 => dec32_fp_sgnj(ins, pr),
+                0b0_0101 => dec32_fp_minmax(ins, pr),
                 0b0_1000 => if_ext_d!(self, self.dec32_fp_cvt_fp(ins, pr)?),
-                0b0_1011 => Self::dec32_fp_op(ins, pr, FpUnaryOp::Sqrt),
-                0b1_0100 => Self::dec32_fp_cmp(ins, pr),
+                0b0_1011 => dec32_fp_op(ins, pr, FpUnaryOp::Sqrt),
+                0b1_0100 => dec32_fp_cmp(ins, pr),
                 0b1_1000 => Self::dec32_fp_cvt_gp(ins, pr),
                 0b1_1010 => Self::dec32_gp_cvt_fp(ins, pr),
                 0b1_1100 => Self::dec32_fp_mv_gp(ins, pr),
@@ -535,36 +547,6 @@ impl<Xlen: XlenT, const EMB: bool> HartIsa<Xlen, EMB> {
                 _ => Err(()),
             }
         }?)
-    }
-
-    fn dec32_branch(ins: u32) -> Maybe<Instr> {
-        let (fn3, rs1, rs2, imm) = b_type(ins);
-        check_gp_regs!(rs1, rs2);
-        let cond = match fn3 {
-            0b000 => CmpCond::Eq,
-            0b001 => CmpCond::Ne,
-            0b100 => CmpCond::Lt,
-            0b101 => CmpCond::Ge,
-            0b110 => CmpCond::LtU,
-            0b111 => CmpCond::GeU,
-            _ => return Err(()),
-        };
-        Ok(Instr::Branch(rs1, rs2, imm, cond))
-    }
-
-    fn dec32_jalr(ins: u32) -> Maybe<Instr> {
-        let (rd, fn3, rs1, imm) = i_type(ins);
-        check_gp_regs!(rd, rs1);
-        if fn3 != 0 {
-            return Err(());
-        }
-        Ok(Instr::Jalr(rd, rs1, imm))
-    }
-
-    fn dec32_jal(ins: u32) -> Maybe<Instr> {
-        let (rd, imm) = j_type(ins);
-        check_gp_regs!(rd);
-        Ok(Instr::Jal(rd, imm))
     }
 
     #[cfg(feature = "Zicsr")]
@@ -582,10 +564,6 @@ impl<Xlen: XlenT, const EMB: bool> HartIsa<Xlen, EMB> {
             0b111 => CsrOp::Rci,
             _ => return Err(()),
         };
-        if fn3 < 0b100 {
-            check_gp_regs!(rs1);
-        }
-        check_gp_regs!(rd);
         Ok(Instr::Csr(rd, rs1, addr, csr_op))
     }
 
@@ -607,22 +585,22 @@ impl<Xlen: XlenT, const EMB: bool> HartIsa<Xlen, EMB> {
             0b0_0001 => self.dec32_load_fp(ins),
             0b0_0011 => self.dec32_misc_mem(ins),
             0b0_0100 => Self::dec32_op_imm(ins),
-            0b0_0101 => Self::dec32_auipc(ins),
+            0b0_0101 => dec32_auipc(ins),
             0b0_0110 => Self::dec32_op_imm_32(ins),
             0b0_1000 => Self::dec32_store(ins),
             0b0_1001 => self.dec32_store_fp(ins),
             0b0_1011 => self.dec32_amo(ins),
             0b0_1100 => self.dec32_op(ins),
-            0b0_1101 => Self::dec32_lui(ins),
+            0b0_1101 => dec32_lui(ins),
             0b0_1110 => self.dec32_op_32(ins),
             0b1_0000 => self.dec32_madd(ins),
             0b1_0001 => self.dec32_msub(ins),
             0b1_0010 => self.dec32_nmsub(ins),
             0b1_0011 => self.dec32_nmadd(ins),
             0b1_0100 => self.dec32_op_fp(ins),
-            0b1_1000 => Self::dec32_branch(ins),
-            0b1_1001 => Self::dec32_jalr(ins),
-            0b1_1011 => Self::dec32_jal(ins),
+            0b1_1000 => dec32_branch(ins),
+            0b1_1001 => dec32_jalr(ins),
+            0b1_1011 => dec32_jal(ins),
             0b1_1100 => self.dec32_system(ins),
             _ => Err(()),
         }
@@ -633,16 +611,12 @@ impl<Xlen: XlenT, const EMB: bool> HartIsa<Xlen, EMB> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    type RV32I = HartIsa<u32, false>;
-    type RV32E = HartIsa<u32, true>;
-    type RV64I = HartIsa<u64, false>;
+
+    type RV32I = HartIsa<u32>;
+    type RV64I = HartIsa<u64>;
     const ILL: Instr = Instr::Trap(Exception::IllegalInstr);
 
-    fn all_pass<Xlen: XlenT, const EMB: bool>(
-        hart: &HartIsa<Xlen, EMB>,
-        ins_raw: &[u32],
-        ins_dec: &[Instr],
-    ) -> bool {
+    fn all_pass<Xlen: XlenT>(hart: &HartIsa<Xlen>, ins_raw: &[u32], ins_dec: &[Instr]) -> bool {
         for (raw, dec) in ins_raw.iter().zip(ins_dec.iter()) {
             if hart.dec32(*raw) != *dec {
                 println!(
@@ -656,7 +630,7 @@ mod tests {
         }
         true
     }
-    fn all_fail<Xlen: XlenT, const EMB: bool>(hart: &HartIsa<Xlen, EMB>, ins_raw: &[u32]) -> bool {
+    fn all_fail<Xlen: XlenT>(hart: &HartIsa<Xlen>, ins_raw: &[u32]) -> bool {
         for raw in ins_raw.iter() {
             if hart.dec32(*raw) != ILL {
                 println!("raw: {:08x}, exp: ILL, dec: {:?}", raw, hart.dec32(*raw));
@@ -755,7 +729,6 @@ mod tests {
             Instr::Trap(Exception::Ebreak),
         ];
         assert!(all_pass(&RV32I::default(), &ins_raw, &ins_dec));
-        assert!(all_fail(&RV32E::default(), &ins_raw[..37]));
     }
 
     #[cfg(feature = "RV64")]
@@ -837,7 +810,7 @@ mod tests {
 
     #[cfg(feature = "M")]
     #[test]
-    fn m_ext() {
+    fn m32_ext() {
         let ins_raw = [
             0x02dd8ab3u32,
             0x02dd9ab3u32,
@@ -892,7 +865,7 @@ mod tests {
 
     #[cfg(feature = "A")]
     #[test]
-    fn a_ext() {
+    fn a32_ext() {
         let ins_raw = [
             0x140daaafu32,
             0x1addaaafu32,
@@ -965,7 +938,7 @@ mod tests {
 
     #[cfg(feature = "F")]
     #[test]
-    fn f_ext() {
+    fn f32_ext() {
         let ins_raw = [
             0xaaadaa87u32,
             0xaadda527u32,
@@ -1081,7 +1054,7 @@ mod tests {
 
     #[cfg(feature = "D")]
     #[test]
-    fn d_ext() {
+    fn d32_ext() {
         let ins_raw = [
             0xaaadba87u32,
             0xaaddb527u32,

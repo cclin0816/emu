@@ -229,7 +229,7 @@ pub enum Instr {
     #[default]
     Undecoded,
 
-    Nop,
+    // Nop,
     Trap(Exception),
     /// (gp-rd, gp-rs1, imm, ...)
     OpImm(u8, u8, i32, BinaryOp),
@@ -290,6 +290,8 @@ pub enum Instr {
     #[cfg(feature = "D")]
     FpCvtFp(u8, u8, RoundMode, Precision, Precision),
 
+    // #[cfg(feature = "C")]
+    // CNop,
     #[cfg(feature = "C")]
     CTrap(Exception),
     /// (gp-rd, gp-rs1, imm, ...)

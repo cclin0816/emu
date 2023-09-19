@@ -2,26 +2,9 @@
 
 use crate::{hart::HartIsa, utils::Maybe, xlen::XlenT};
 
-// x16-x31 in RV32E is NSE
-impl<Xlen: XlenT, const EMB: bool> HartIsa<Xlen, EMB> {
-    pub fn check_gp_reg(reg: u8) -> Maybe<()> {
-        #[cfg(feature = "E")]
-        if EMB && reg >= 16 {
-            return Err(());
-        }
-        Ok(())
-    }
-}
-
-/// x16-x31 in RV32E is NSE\
-/// fast fail if any of the gp register is not valid
-macro_rules! check_gp_regs {
-    ($($reg:ident),*) => {
-        $(
-            HartIsa::<Xlen, EMB>::check_gp_reg($reg)?;
-        )*
-    };
-}
+pub const ZERO: u8 = 0;
+pub const RA: u8 = 1;
+pub const SP: u8 = 2;
 
 /// sign-extend any length imm to i32
 pub fn sext(imm: u32, sign_bit: u32) -> i32 {
@@ -179,7 +162,7 @@ where
 macro_rules! shuffle_bits {
     ($val:expr, $shift:literal, $($high:literal, $low:literal),*) => {
         {
-            let val = $val;
+            let val = $val as u32;
             let mut res = 0;
             let mut _pos = $shift;
             $(

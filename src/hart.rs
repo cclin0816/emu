@@ -7,14 +7,14 @@ pub struct Hart<Xlen: XlenT, const EMB: bool> {
     #[cfg(feature = "F")]
     pub fpu: Fpu<Xlen>,
     pub pc: Xlen,
-    pub isa: HartIsa<Xlen, EMB>,
+    pub isa: HartIsa<Xlen>,
 }
 
 /// each flag corresponds to a feature in Cargo.toml\
 /// act as a fast query misa register
 #[allow(non_snake_case)]
 #[derive(Debug, Clone, Default)]
-pub struct HartIsa<Xlen: XlenT, const EMB: bool> {
+pub struct HartIsa<Xlen: XlenT> {
     /// Atomic
     #[cfg(feature = "A")]
     pub A: bool,
