@@ -1,11 +1,13 @@
 use crate::{
+    hart::Hart,
     uop::{BinaryOp, CmpCond},
+    utils::Maybe,
     xlen::XlenT,
 };
 use std::cmp::Ordering;
 
 impl CmpCond {
-    fn test<Xlen: XlenT>(self, lhs: Xlen, rhs: Xlen) -> bool {
+    pub fn test<Xlen: XlenT>(self, lhs: Xlen, rhs: Xlen) -> bool {
         match self {
             CmpCond::Eq => lhs == rhs,
             CmpCond::Ne => lhs != rhs,
@@ -18,7 +20,7 @@ impl CmpCond {
 }
 
 impl BinaryOp {
-    fn exec<Xlen: XlenT>(self, lhs: Xlen, rhs: Xlen) -> Xlen {
+    pub fn exec<Xlen: XlenT>(self, lhs: Xlen, rhs: Xlen) -> Xlen {
         match self {
             BinaryOp::Add => lhs.add(rhs),
             BinaryOp::Sll => {

@@ -1,4 +1,4 @@
-use crate::{decode::common::*, hart::HartIsa, uop::*, utils::Maybe, xlen::XlenT};
+use crate::{decode::common::*, uop::*, utils::Maybe, xlen::XlenT};
 
 fn rhigh(ins: u16) -> u8 {
     select_bits(ins, 11, 7) as u8
@@ -66,7 +66,7 @@ fn dec16_addi4spn(ins: u16) -> Maybe<Instr> {
         // canonical illegal instruction
         return Err(());
     }
-    Ok(Instr::COpImm(rd, SP, imm, BinaryOp::Add))
+    Ok(Instr::COpImm(rd, GP_SP, imm, BinaryOp::Add))
 }
 
 fn dec16_lw(ins: u16) -> Maybe<Instr> {
@@ -85,7 +85,12 @@ fn dec16_addi(ins: u16) -> Maybe<Instr> {
 }
 
 fn dec16_li(ins: u16) -> Maybe<Instr> {
-    Ok(Instr::COpImm(rhigh(ins), ZERO, op_imm6(ins), BinaryOp::Add))
+    Ok(Instr::COpImm(
+        rhigh(ins),
+        GP_ZERO,
+        op_imm6(ins),
+        BinaryOp::Add,
+    ))
 }
 
 fn dec16_addi16sp_lui(ins: u16) -> Maybe<Instr> {
@@ -97,7 +102,7 @@ fn dec16_addi16sp_lui(ins: u16) -> Maybe<Instr> {
         if imm == 0 {
             return Err(());
         }
-        Ok(Instr::COpImm(SP, SP, imm, BinaryOp::Add))
+        Ok(Instr::COpImm(GP_SP, GP_SP, imm, BinaryOp::Add))
     } else {
         // lui
         let imm = shuffle_bits!(ins, 12, 6, 2, 12, 12);
@@ -105,7 +110,7 @@ fn dec16_addi16sp_lui(ins: u16) -> Maybe<Instr> {
         if imm == 0 {
             return Err(());
         }
-        Ok(Instr::COpImm(rd, ZERO, imm, BinaryOp::Add))
+        Ok(Instr::COpImm(rd, GP_ZERO, imm, BinaryOp::Add))
     }
 }
 
@@ -114,7 +119,7 @@ fn dec16_andi(ins: u16, rd_rs1: u8) -> Maybe<Instr> {
 }
 
 fn dec_j(ins: u16) -> Maybe<Instr> {
-    Ok(Instr::CJal(ZERO, j_imm(ins)))
+    Ok(Instr::CJal(GP_ZERO, j_imm(ins)))
 }
 
 fn dec_branch(ins: u16, cond: CmpCond) -> Maybe<Instr> {
@@ -129,7 +134,7 @@ fn dec16_lwsp(ins: u16) -> Maybe<Instr> {
     if rd == 0 {
         return Err(());
     }
-    Ok(Instr::CLoad(rd, SP, lsp4b_uimm(ins), MemWidth::W))
+    Ok(Instr::CLoad(rd, GP_SP, lsp4b_uimm(ins), MemWidth::W))
 }
 
 fn dec16_misc(ins: u16) -> Maybe<Instr> {
@@ -137,19 +142,24 @@ fn dec16_misc(ins: u16) -> Maybe<Instr> {
     let rs2 = rlow(ins);
     Ok(match (test_bit(ins, 12), rs1, rs2) {
         (false, 0, 0) => return Err(()),
-        (false, rs1, 0) => Instr::CJalr(ZERO, rs1),
+        (false, rs1, 0) => Instr::CJalr(GP_ZERO, rs1),
         (false, rd, rs1) => Instr::COpImm(rd, rs1, 0, BinaryOp::Add),
-        (true, 0, 0) => Instr::CTrap(Exception::Ebreak),
-        (true, rs1, 0) => Instr::CJalr(RA, rs1),
+        (true, 0, 0) => Instr::Trap(Exception::Ebreak),
+        (true, rs1, 0) => Instr::CJalr(GP_RA, rs1),
         (true, rd_rs1, rs2) => Instr::COp(rd_rs1, rs2, BinaryOp::Add),
     })
 }
 
 fn dec16_swsp(ins: u16) -> Maybe<Instr> {
-    Ok(Instr::CStore(SP, rlow(ins), ssp4b_uimm(ins), MemWidth::W))
+    Ok(Instr::CStore(
+        GP_SP,
+        rlow(ins),
+        ssp4b_uimm(ins),
+        MemWidth::W,
+    ))
 }
 
-impl<Xlen: XlenT> HartIsa<Xlen> {
+impl<Xlen: XlenT> Isa<Xlen> {
     fn dec16_lq_fld(&self, ins: u16) -> Maybe<Instr> {
         let (rd, rs1) = cregs(ins);
         if_rv128!(
@@ -220,7 +230,7 @@ impl<Xlen: XlenT> HartIsa<Xlen> {
                 Instr::COpImm(rd_rs1, rd_rs1, op_imm6(ins), BinaryOp::AddW)
             },
             // jal
-            Instr::CJal(RA, j_imm(ins))
+            Instr::CJal(GP_RA, j_imm(ins))
         ))
     }
 
@@ -306,7 +316,10 @@ impl<Xlen: XlenT> HartIsa<Xlen> {
             // lqsp
             unimplemented!("rv128 not implemented yet"),
             // fldsp
-            if_ext_d!(self, Instr::CLoadFp(rd, SP, lsp8b_uimm(ins), Precision::D))
+            if_ext_d!(
+                self,
+                Instr::CLoadFp(rd, GP_SP, lsp8b_uimm(ins), Precision::D)
+            )
         )
     }
 
@@ -318,10 +331,13 @@ impl<Xlen: XlenT> HartIsa<Xlen> {
                 if rd == 0 {
                     return Err(());
                 }
-                Ok(Instr::CLoad(rd, SP, lsp8b_uimm(ins), MemWidth::D))
+                Ok(Instr::CLoad(rd, GP_SP, lsp8b_uimm(ins), MemWidth::D))
             },
             // flwsp
-            if_ext_f!(self, Instr::CLoadFp(rd, SP, lsp4b_uimm(ins), Precision::S))
+            if_ext_f!(
+                self,
+                Instr::CLoadFp(rd, GP_SP, lsp4b_uimm(ins), Precision::S)
+            )
         )
     }
 
@@ -333,7 +349,7 @@ impl<Xlen: XlenT> HartIsa<Xlen> {
             // fsdsp
             if_ext_d!(
                 self,
-                Instr::CStoreFp(SP, rs2, ssp8b_uimm(ins), Precision::D)
+                Instr::CStoreFp(GP_SP, rs2, ssp8b_uimm(ins), Precision::D)
             )
         )
     }
@@ -342,11 +358,11 @@ impl<Xlen: XlenT> HartIsa<Xlen> {
         let rs2 = rlow(ins);
         if_ge_rv64!(
             // sdsp
-            Ok(Instr::CStore(SP, rs2, ssp8b_uimm(ins), MemWidth::D)),
+            Ok(Instr::CStore(GP_SP, rs2, ssp8b_uimm(ins), MemWidth::D)),
             // fswsp
             if_ext_f!(
                 self,
-                Instr::CStoreFp(SP, rs2, ssp4b_uimm(ins), Precision::S)
+                Instr::CStoreFp(GP_SP, rs2, ssp4b_uimm(ins), Precision::S)
             )
         )
     }
@@ -372,7 +388,7 @@ impl<Xlen: XlenT> HartIsa<Xlen> {
             0b10 => self.dec16_c2(ins),
             _ => Err(()),
         }
-        .unwrap_or(Instr::CTrap(Exception::IllegalInstr))
+        .unwrap_or(Instr::Trap(Exception::IllegalInstr))
     }
 }
 
@@ -380,28 +396,18 @@ impl<Xlen: XlenT> HartIsa<Xlen> {
 mod tests {
     use super::*;
 
-    type RV32I = HartIsa<u32>;
-    type RV64I = HartIsa<u64>;
-    const ILL: Instr = Instr::CTrap(Exception::IllegalInstr);
+    type RV32 = Isa<u32>;
+    #[cfg(feature = "RV64")]
+    type RV64 = Isa<u64>;
 
-    fn all_pass<Xlen: XlenT>(hart: &HartIsa<Xlen>, ins_raw: &[u16], ins_dec: &[Instr]) -> bool {
-        for (raw, dec) in ins_raw.iter().zip(ins_dec.iter()) {
-            if hart.dec16(*raw) != *dec {
+    fn all_pass<Xlen: XlenT>(hart: &Isa<Xlen>, ins_raw: &[u16], ins_expect: &[Instr]) -> bool {
+        for (&raw, &expect) in ins_raw.iter().zip(ins_expect.iter()) {
+            let result = hart.dec16(raw);
+            if result != expect {
                 println!(
-                    "raw: {:04x}, exp: {:?}, dec: {:?}",
-                    raw,
-                    dec,
-                    hart.dec16(*raw)
+                    " raw: {:04x},\n expected: {:?},\n result: {:?}",
+                    raw, expect, result
                 );
-                return false;
-            }
-        }
-        true
-    }
-    fn all_fail<Xlen: XlenT>(hart: &HartIsa<Xlen>, ins_raw: &[u16]) -> bool {
-        for raw in ins_raw.iter() {
-            if hart.dec16(*raw) != ILL {
-                println!("raw: {:04x}, exp: ILL, dec: {:?}", raw, hart.dec16(*raw));
                 return false;
             }
         }
@@ -409,21 +415,22 @@ mod tests {
     }
 
     #[test]
-    fn t1() {
+    fn sanity() {
+        // rv32 == rv64
         let ins_raw = [
             0x0ac8u16, 0x5aa8u16, 0xdaa8u16, 0x1aa9u16, 0x5aa9u16, 0x710du16, 0x7aa9u16, 0x8155u16,
             0x8555u16, 0x8955u16, 0x8d15u16, 0x8d35u16, 0x8d55u16, 0x8d75u16, 0xb46du16, 0xd931u16,
             0xf931u16, 0x0ad6u16, 0x5aceu16, 0x8a82u16, 0x8aeeu16, 0x9002u16, 0x9a82u16, 0x9aeeu16,
             0xd9d6u16,
         ];
-        let ins_dec = [
-            Instr::COpImm(10, 2, 340, BinaryOp::Add),
+        let ins_expect = [
+            Instr::COpImm(10, GP_SP, 340, BinaryOp::Add),
             Instr::CLoad(10, 13, 112, MemWidth::W),
             Instr::CStore(13, 10, 112, MemWidth::W),
             Instr::COpImm(21, 21, -22, BinaryOp::Add),
-            Instr::COpImm(21, 0, -22, BinaryOp::Add),
-            Instr::COpImm(2, 2, -352, BinaryOp::Add),
-            Instr::COpImm(21, 0, -90112, BinaryOp::Add),
+            Instr::COpImm(21, GP_ZERO, -22, BinaryOp::Add),
+            Instr::COpImm(GP_SP, GP_SP, -352, BinaryOp::Add),
+            Instr::COpImm(21, GP_ZERO, -90112, BinaryOp::Add),
             Instr::COpImm(10, 10, 21, BinaryOp::Srl),
             Instr::COpImm(10, 10, 21, BinaryOp::Sra),
             Instr::COpImm(10, 10, 21, BinaryOp::And),
@@ -431,72 +438,66 @@ mod tests {
             Instr::COp(10, 13, BinaryOp::Xor),
             Instr::COp(10, 13, BinaryOp::Or),
             Instr::COp(10, 13, BinaryOp::And),
-            Instr::CJal(0, -1366),
+            Instr::CJal(GP_ZERO, -1366),
             Instr::CBranch(10, -172, CmpCond::Eq),
             Instr::CBranch(10, -172, CmpCond::Ne),
             Instr::COpImm(21, 21, 21, BinaryOp::Sll),
-            Instr::CLoad(21, 2, 240, MemWidth::W),
-            Instr::CJalr(0, 21),
+            Instr::CLoad(21, GP_SP, 240, MemWidth::W),
+            Instr::CJalr(GP_ZERO, 21),
             Instr::COpImm(21, 27, 0, BinaryOp::Add),
-            Instr::CTrap(Exception::Ebreak),
-            Instr::CJalr(1, 21),
+            Instr::Trap(Exception::Ebreak),
+            Instr::CJalr(GP_RA, 21),
             Instr::COp(21, 27, BinaryOp::Add),
-            Instr::CStore(2, 21, 240, MemWidth::W),
+            Instr::CStore(GP_SP, 21, 240, MemWidth::W),
         ];
-        assert!(all_pass(&RV32I::default(), &ins_raw, &ins_dec));
-        assert!(all_pass(&RV64I::default(), &ins_raw, &ins_dec));
+        assert!(all_pass(&RV32::default(), &ins_raw, &ins_expect));
 
         #[cfg(feature = "D")]
         {
             let ins_raw = [0x3aa8u16, 0xbaa8u16, 0x3aceu16, 0xb9d6u16];
-            let ins_dec = [
+            let ins_expect = [
                 Instr::CLoadFp(10, 13, 112, Precision::D),
                 Instr::CStoreFp(13, 10, 112, Precision::D),
-                Instr::CLoadFp(21, SP, 240, Precision::D),
-                Instr::CStoreFp(SP, 21, 240, Precision::D),
+                Instr::CLoadFp(21, GP_SP, 240, Precision::D),
+                Instr::CStoreFp(GP_SP, 21, 240, Precision::D),
             ];
-            let mut hart = RV32I::default();
-            hart.D = true;
-            assert!(all_pass(&hart, &ins_raw, &ins_dec));
-            let mut hart = RV64I::default();
-            hart.D = true;
-            assert!(all_pass(&hart, &ins_raw, &ins_dec));
+            assert!(all_pass(&RV32::default(), &ins_raw, &ins_expect));
         }
-    }
 
-    #[test]
-    fn t2() {
+        // rv32 != rv64
         let ins_raw = [
             0x3801u16, 0x7ea8u16, 0xfea8u16, 0x7aceu16, 0xf9d6u16, 0x9115u16, 0x9515u16, 0x9d15u16,
             0x9d35u16, 0x1516u16,
         ];
-        let ins_dec_64 = [
-            Instr::COpImm(16, 16, -32, BinaryOp::AddW),
-            Instr::CLoad(10, 13, 120, MemWidth::D),
-            Instr::CStore(13, 10, 120, MemWidth::D),
-            Instr::CLoad(21, 2, 240, MemWidth::D),
-            Instr::CStore(2, 21, 240, MemWidth::D),
-            Instr::COpImm(10, 10, 37, BinaryOp::Srl),
-            Instr::COpImm(10, 10, 37, BinaryOp::Sra),
-            Instr::COp(10, 13, BinaryOp::SubW),
-            Instr::COp(10, 13, BinaryOp::AddW),
-            Instr::COpImm(10, 10, 37, BinaryOp::Sll),
-        ];
-        assert!(all_pass(&RV64I::default(), &ins_raw, &ins_dec_64));
-        assert!(all_fail(&RV32I::default(), &ins_raw[1..]));
-        assert_eq!(RV32I::default().dec16(ins_raw[0]), Instr::CJal(1, -2032));
+        let ins_expect = [Instr::CJal(1, -2032)];
+        assert!(all_pass(&RV32::default(), &ins_raw[..1], &ins_expect));
+
+        #[cfg(feature = "RV64")]
+        {
+            let ins_expect = [
+                Instr::COpImm(16, 16, -32, BinaryOp::AddW),
+                Instr::CLoad(10, 13, 120, MemWidth::D),
+                Instr::CStore(13, 10, 120, MemWidth::D),
+                Instr::CLoad(21, GP_SP, 240, MemWidth::D),
+                Instr::CStore(GP_SP, 21, 240, MemWidth::D),
+                Instr::COpImm(10, 10, 37, BinaryOp::Srl),
+                Instr::COpImm(10, 10, 37, BinaryOp::Sra),
+                Instr::COp(10, 13, BinaryOp::SubW),
+                Instr::COp(10, 13, BinaryOp::AddW),
+                Instr::COpImm(10, 10, 37, BinaryOp::Sll),
+            ];
+            assert!(all_pass(&RV64::default(), &ins_raw, &ins_expect));
+        }
 
         #[cfg(feature = "F")]
         {
-            let ins_dec_32 = [
+            let ins_expect32 = [
                 Instr::CLoadFp(10, 13, 120, Precision::S),
                 Instr::CStoreFp(13, 10, 120, Precision::S),
-                Instr::CLoadFp(21, 2, 240, Precision::S),
-                Instr::CStoreFp(2, 21, 240, Precision::S),
+                Instr::CLoadFp(21, GP_SP, 240, Precision::S),
+                Instr::CStoreFp(GP_SP, 21, 240, Precision::S),
             ];
-            let mut hart = RV32I::default();
-            hart.F = true;
-            assert!(all_pass(&hart, &ins_raw[1..6], &ins_dec_32));
+            assert!(all_pass(&RV32::default(), &ins_raw[1..6], &ins_expect32));
         }
     }
 }

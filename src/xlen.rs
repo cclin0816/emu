@@ -317,45 +317,46 @@ impl_xlen_t!(u128, i128);
 mod tests {
     use super::*;
 
-    #[cfg(feature = "M")]
     #[test]
-    fn u32_mul() {
-        let val1 = 0x80000000u32; // -2147483648
-        let val2 = 0xffffffffu32; // -1
-        let val3 = 0x7fffffffu32; // 2147483647
-        let val4 = 0xffff0000u32; // -65536
-        assert_eq!(val1.mulhu(val1), 0x40000000);
-        assert_eq!(val1.mulh(val1), 0x40000000);
-        assert_eq!(val2.mulh(val2), 0x0);
-        assert_eq!(val2.mulh(val1), 0x0);
-        assert_eq!(val1.mulh(val3), 0xc0000000);
-        assert_eq!(val4.mulh(val4), 0x1);
-        assert_eq!(val1.mulhsu(val1), 0xc0000000);
-        assert_eq!(val2.mulhsu(val2), 0xffffffff);
-        assert_eq!(val1.mulhsu(val2), 0x80000000);
-        assert_eq!(val3.mulhsu(val2), 0x7ffffffe);
-        assert_eq!(val4.mulhsu(val4), 0xffff0001);
-    }
+    fn sanity() {
+        #[cfg(feature = "M")]
+        {
+            let val1 = 0x80000000u32; // -2147483648
+            let val2 = 0xffffffffu32; // -1
+            let val3 = 0x7fffffffu32; // 2147483647
+            let val4 = 0xffff0000u32; // -65536
+            assert_eq!(val1.mulhu(val1), 0x40000000);
+            assert_eq!(val1.mulh(val1), 0x40000000);
+            assert_eq!(val2.mulh(val2), 0x0);
+            assert_eq!(val2.mulh(val1), 0x0);
+            assert_eq!(val1.mulh(val3), 0xc0000000);
+            assert_eq!(val4.mulh(val4), 0x1);
+            assert_eq!(val1.mulhsu(val1), 0xc0000000);
+            assert_eq!(val2.mulhsu(val2), 0xffffffff);
+            assert_eq!(val1.mulhsu(val2), 0x80000000);
+            assert_eq!(val3.mulhsu(val2), 0x7ffffffe);
+            assert_eq!(val4.mulhsu(val4), 0xffff0001);
+        }
 
-    // u64 has same logic as u32
+        // u64 has same logic as u32
 
-    #[cfg(all(feature = "M", feature = "RV128"))]
-    #[test]
-    fn u128_mul() {
-        let val1 = 0x80000000000000000000000000000000u128;
-        let val2 = 0xffffffffffffffffffffffffffffffffu128;
-        let val3 = 0x7fffffffffffffffffffffffffffffffu128;
-        let val4 = 0xffffffffffffffff0000000000000000u128;
-        assert_eq!(val1.mulhu(val1), 0x40000000000000000000000000000000);
-        assert_eq!(val1.mulh(val1), 0x40000000000000000000000000000000);
-        assert_eq!(val2.mulh(val2), 0x0);
-        assert_eq!(val2.mulh(val1), 0x0);
-        assert_eq!(val1.mulh(val3), 0xc0000000000000000000000000000000);
-        assert_eq!(val4.mulh(val4), 0x1);
-        assert_eq!(val1.mulhsu(val1), 0xc0000000000000000000000000000000);
-        assert_eq!(val2.mulhsu(val2), 0xffffffffffffffffffffffffffffffff);
-        assert_eq!(val1.mulhsu(val2), 0x80000000000000000000000000000000);
-        assert_eq!(val3.mulhsu(val2), 0x7ffffffffffffffffffffffffffffffe);
-        assert_eq!(val4.mulhsu(val4), 0xffffffffffffffff0000000000000001);
+        #[cfg(all(feature = "M", feature = "RV128"))]
+        {
+            let val1 = 0x80000000000000000000000000000000u128;
+            let val2 = 0xffffffffffffffffffffffffffffffffu128;
+            let val3 = 0x7fffffffffffffffffffffffffffffffu128;
+            let val4 = 0xffffffffffffffff0000000000000000u128;
+            assert_eq!(val1.mulhu(val1), 0x40000000000000000000000000000000);
+            assert_eq!(val1.mulh(val1), 0x40000000000000000000000000000000);
+            assert_eq!(val2.mulh(val2), 0x0);
+            assert_eq!(val2.mulh(val1), 0x0);
+            assert_eq!(val1.mulh(val3), 0xc0000000000000000000000000000000);
+            assert_eq!(val4.mulh(val4), 0x1);
+            assert_eq!(val1.mulhsu(val1), 0xc0000000000000000000000000000000);
+            assert_eq!(val2.mulhsu(val2), 0xffffffffffffffffffffffffffffffff);
+            assert_eq!(val1.mulhsu(val2), 0x80000000000000000000000000000000);
+            assert_eq!(val3.mulhsu(val2), 0x7ffffffffffffffffffffffffffffffe);
+            assert_eq!(val4.mulhsu(val4), 0xffffffffffffffff0000000000000001);
+        }
     }
 }

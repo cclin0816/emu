@@ -1,5 +1,3 @@
-use std::default;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CmpCond {
     Eq,
@@ -24,25 +22,20 @@ pub enum MemWidth {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FenceMode {
-    Normal,
-    Tso,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MiscMemOp {
-    /// (pred, succ, ...)
-    Fence(u8, u8, FenceMode),
+    /// (pred, succ)
+    Fence(u8, u8),
+    FenceTso,
     #[cfg(feature = "Zifencei")]
     FenceI,
 }
 
-impl MiscMemOp {
-    pub const FENCE_W: u8 = 1 << 0;
-    pub const FENCE_R: u8 = 1 << 1;
-    pub const FENCE_I: u8 = 1 << 2;
-    pub const FENCE_O: u8 = 1 << 3;
-}
+// impl MiscMemOp {
+//     pub const FENCE_W: u8 = 1 << 0;
+//     pub const FENCE_R: u8 = 1 << 1;
+//     pub const FENCE_I: u8 = 1 << 2;
+//     pub const FENCE_O: u8 = 1 << 3;
+// }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BinaryOp {
@@ -229,7 +222,6 @@ pub enum Instr {
     #[default]
     Undecoded,
 
-    // Nop,
     Trap(Exception),
     /// (gp-rd, gp-rs1, imm, ...)
     OpImm(u8, u8, i32, BinaryOp),
@@ -290,10 +282,6 @@ pub enum Instr {
     #[cfg(feature = "D")]
     FpCvtFp(u8, u8, RoundMode, Precision, Precision),
 
-    // #[cfg(feature = "C")]
-    // CNop,
-    #[cfg(feature = "C")]
-    CTrap(Exception),
     /// (gp-rd, gp-rs1, imm, ...)
     #[cfg(feature = "C")]
     COpImm(u8, u8, i32, BinaryOp),

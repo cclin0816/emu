@@ -1,4 +1,4 @@
-use crate::{decode::common::*, hart::HartIsa, uop::*, utils::Maybe, xlen::XlenT};
+use crate::{decode::common::*, uop::*, utils::Maybe, xlen::XlenT};
 
 fn fn3(ins: u32) -> u8 {
     select_bits(ins, 14, 12) as u8
@@ -123,7 +123,7 @@ fn dec32_auipc(ins: u32) -> Maybe<Instr> {
 
 fn dec32_lui(ins: u32) -> Maybe<Instr> {
     let (rd, imm) = u_type(ins);
-    Ok(Instr::OpImm(rd, ZERO, imm, BinaryOp::Add))
+    Ok(Instr::OpImm(rd, GP_ZERO, imm, BinaryOp::Add))
 }
 
 #[cfg(feature = "F")]
@@ -205,7 +205,7 @@ fn dec32_jal(ins: u32) -> Maybe<Instr> {
     Ok(Instr::Jal(rd, imm))
 }
 
-impl<Xlen: XlenT> HartIsa<Xlen> {
+impl<Xlen: XlenT> Isa<Xlen> {
     fn dec32_load(ins: u32) -> Maybe<Instr> {
         let (rd, fn3, rs1, imm) = i_type(ins);
         let mem_width = match fn3 {
@@ -216,7 +216,7 @@ impl<Xlen: XlenT> HartIsa<Xlen> {
             0b100 => MemWidth::BU,
             0b101 => MemWidth::HU,
             0b110 => if_ge_rv64!(MemWidth::WU)?,
-            _ => unreachable!(),
+            _ => return Err(()),
         };
         Ok(Instr::Load(rd, rs1, imm, mem_width))
     }
@@ -245,14 +245,14 @@ impl<Xlen: XlenT> HartIsa<Xlen> {
                 let pred = select_bits(ins, 27, 24) as u8;
                 let succ = select_bits(ins, 23, 20) as u8;
                 let fm = select_bits(ins, 31, 28);
-                let fm = match (fm, pred, succ) {
-                    (0b0000, _, _) => FenceMode::Normal,
-                    (0b1000, 3, 3) => FenceMode::Tso,
+                let fence = match (fm, pred, succ) {
+                    (0b0000, _, _) => MiscMemOp::Fence(pred, succ),
+                    (0b1000, 3, 3) => MiscMemOp::FenceTso,
                     // Base implementations shall treat all such reserved
                     // configurations as normal fences
-                    _ => FenceMode::Normal,
+                    _ => MiscMemOp::Fence(pred, succ),
                 };
-                Ok(Instr::MiscMem(MiscMemOp::Fence(pred, succ, fm)))
+                Ok(Instr::MiscMem(fence))
             }
             0b001 => if_ext_zifencei!(self, Instr::MiscMem(MiscMemOp::FenceI)),
             _ => Err(()),
@@ -612,28 +612,18 @@ impl<Xlen: XlenT> HartIsa<Xlen> {
 mod tests {
     use super::*;
 
-    type RV32I = HartIsa<u32>;
-    type RV64I = HartIsa<u64>;
-    const ILL: Instr = Instr::Trap(Exception::IllegalInstr);
+    type RV32 = Isa<u32>;
+    #[cfg(feature = "RV64")]
+    type RV64 = Isa<u64>;
 
-    fn all_pass<Xlen: XlenT>(hart: &HartIsa<Xlen>, ins_raw: &[u32], ins_dec: &[Instr]) -> bool {
-        for (raw, dec) in ins_raw.iter().zip(ins_dec.iter()) {
-            if hart.dec32(*raw) != *dec {
+    fn all_pass<Xlen: XlenT>(hart: &Isa<Xlen>, ins_raw: &[u32], ins_expect: &[Instr]) -> bool {
+        for (&raw, &expect) in ins_raw.iter().zip(ins_expect.iter()) {
+            let result = hart.dec32(raw);
+            if result != expect {
                 println!(
-                    "raw: {:08x}, exp: {:?}, dec: {:?}",
-                    raw,
-                    dec,
-                    hart.dec32(*raw)
+                    " raw: {:08x},\n expected: {:?},\n result: {:?}",
+                    raw, expect, result
                 );
-                return false;
-            }
-        }
-        true
-    }
-    fn all_fail<Xlen: XlenT>(hart: &HartIsa<Xlen>, ins_raw: &[u32]) -> bool {
-        for raw in ins_raw.iter() {
-            if hart.dec32(*raw) != ILL {
-                println!("raw: {:08x}, exp: ILL, dec: {:?}", raw, hart.dec32(*raw));
                 return false;
             }
         }
@@ -641,7 +631,7 @@ mod tests {
     }
 
     #[test]
-    fn rv32i() {
+    fn sanity() {
         let ins_raw = [
             0xaaaaaab7u32,
             0xaaaaaa97u32,
@@ -723,460 +713,403 @@ mod tests {
             Instr::Op(21, 27, 13, BinaryOp::Sra),
             Instr::Op(21, 27, 13, BinaryOp::Or),
             Instr::Op(21, 27, 13, BinaryOp::And),
-            Instr::MiscMem(MiscMemOp::Fence(10, 5, FenceMode::Normal)),
-            Instr::MiscMem(MiscMemOp::Fence(3, 3, FenceMode::Tso)),
+            Instr::MiscMem(MiscMemOp::Fence(10, 5)),
+            Instr::MiscMem(MiscMemOp::FenceTso),
             Instr::Trap(Exception::Ecall),
             Instr::Trap(Exception::Ebreak),
         ];
-        assert!(all_pass(&RV32I::default(), &ins_raw, &ins_dec));
-    }
+        assert!(all_pass(&RV32::default(), &ins_raw, &ins_dec));
 
-    #[cfg(feature = "RV64")]
-    #[test]
-    fn rv64i() {
-        let ins_raw = [
-            0xaaadea83u32,
-            0xaaadba83u32,
-            0xaaddb523u32,
-            0x02ad9a93u32,
-            0x02adda93u32,
-            0x42adda93u32,
-            0xaaad8a9bu32,
-            0x015d9a9bu32,
-            0x015dda9bu32,
-            0x415dda9bu32,
-            0x00dd8abbu32,
-            0x40dd8abbu32,
-            0x00dd9abbu32,
-            0x00dddabbu32,
-            0x40dddabbu32,
-        ];
-        let ins_dec = [
-            Instr::Load(21, 27, -1366, MemWidth::WU),
-            Instr::Load(21, 27, -1366, MemWidth::D),
-            Instr::Store(27, 13, -1366, MemWidth::D),
-            Instr::OpImm(21, 27, 42, BinaryOp::Sll),
-            Instr::OpImm(21, 27, 42, BinaryOp::Srl),
-            Instr::OpImm(21, 27, 42, BinaryOp::Sra),
-            Instr::OpImm(21, 27, -1366, BinaryOp::AddW),
-            Instr::OpImm(21, 27, 21, BinaryOp::SllW),
-            Instr::OpImm(21, 27, 21, BinaryOp::SrlW),
-            Instr::OpImm(21, 27, 21, BinaryOp::SraW),
-            Instr::Op(21, 27, 13, BinaryOp::AddW),
-            Instr::Op(21, 27, 13, BinaryOp::SubW),
-            Instr::Op(21, 27, 13, BinaryOp::SllW),
-            Instr::Op(21, 27, 13, BinaryOp::SrlW),
-            Instr::Op(21, 27, 13, BinaryOp::SraW),
-        ];
-        assert!(all_pass(&RV64I::default(), &ins_raw, &ins_dec));
-        assert!(all_fail(&RV32I::default(), &ins_raw));
-    }
+        #[cfg(feature = "RV64")]
+        {
+            let ins_raw = [
+                0xaaadea83u32,
+                0xaaadba83u32,
+                0xaaddb523u32,
+                0x02ad9a93u32,
+                0x02adda93u32,
+                0x42adda93u32,
+                0xaaad8a9bu32,
+                0x015d9a9bu32,
+                0x015dda9bu32,
+                0x415dda9bu32,
+                0x00dd8abbu32,
+                0x40dd8abbu32,
+                0x00dd9abbu32,
+                0x00dddabbu32,
+                0x40dddabbu32,
+            ];
+            let ins_dec = [
+                Instr::Load(21, 27, -1366, MemWidth::WU),
+                Instr::Load(21, 27, -1366, MemWidth::D),
+                Instr::Store(27, 13, -1366, MemWidth::D),
+                Instr::OpImm(21, 27, 42, BinaryOp::Sll),
+                Instr::OpImm(21, 27, 42, BinaryOp::Srl),
+                Instr::OpImm(21, 27, 42, BinaryOp::Sra),
+                Instr::OpImm(21, 27, -1366, BinaryOp::AddW),
+                Instr::OpImm(21, 27, 21, BinaryOp::SllW),
+                Instr::OpImm(21, 27, 21, BinaryOp::SrlW),
+                Instr::OpImm(21, 27, 21, BinaryOp::SraW),
+                Instr::Op(21, 27, 13, BinaryOp::AddW),
+                Instr::Op(21, 27, 13, BinaryOp::SubW),
+                Instr::Op(21, 27, 13, BinaryOp::SllW),
+                Instr::Op(21, 27, 13, BinaryOp::SrlW),
+                Instr::Op(21, 27, 13, BinaryOp::SraW),
+            ];
+            assert!(all_pass(&RV64::default(), &ins_raw, &ins_dec));
+        }
 
-    #[cfg(feature = "Zifencei")]
-    #[test]
-    fn zifencei_ext() {
-        let ins_raw = [0x0000100fu32];
-        let ins_dec = [Instr::MiscMem(MiscMemOp::FenceI)];
-        let mut hart = RV32I::default();
-        assert!(all_fail(&hart, &ins_raw));
-        hart.Zifencei = true;
-        assert!(all_pass(&hart, &ins_raw, &ins_dec));
-    }
+        #[cfg(feature = "Zifencei")]
+        {
+            let ins_raw = [0x0000100fu32];
+            let ins_dec = [Instr::MiscMem(MiscMemOp::FenceI)];
+            assert!(all_pass(&RV32::default(), &ins_raw, &ins_dec));
+        }
 
-    #[cfg(feature = "Zicsr")]
-    #[test]
-    fn zicsr_ext() {
-        let ins_raw = [
-            0xaaad9af3u32,
-            0xaaadaaf3u32,
-            0xaaadbaf3u32,
-            0xaaaddaf3u32,
-            0xaaadeaf3u32,
-            0xaaadfaf3u32,
-        ];
-        let ins_dec = [
-            Instr::Csr(21, 27, 2730, CsrOp::Rw),
-            Instr::Csr(21, 27, 2730, CsrOp::Rs),
-            Instr::Csr(21, 27, 2730, CsrOp::Rc),
-            Instr::Csr(21, 27, 2730, CsrOp::Rwi),
-            Instr::Csr(21, 27, 2730, CsrOp::Rsi),
-            Instr::Csr(21, 27, 2730, CsrOp::Rci),
-        ];
-        let mut hart = RV32I::default();
-        assert!(all_fail(&hart, &ins_raw));
-        hart.Zicsr = true;
-        assert!(all_pass(&hart, &ins_raw, &ins_dec));
-    }
+        #[cfg(feature = "Zicsr")]
+        {
+            let ins_raw = [
+                0xaaad9af3u32,
+                0xaaadaaf3u32,
+                0xaaadbaf3u32,
+                0xaaaddaf3u32,
+                0xaaadeaf3u32,
+                0xaaadfaf3u32,
+            ];
+            let ins_dec = [
+                Instr::Csr(21, 27, 2730, CsrOp::Rw),
+                Instr::Csr(21, 27, 2730, CsrOp::Rs),
+                Instr::Csr(21, 27, 2730, CsrOp::Rc),
+                Instr::Csr(21, 27, 2730, CsrOp::Rwi),
+                Instr::Csr(21, 27, 2730, CsrOp::Rsi),
+                Instr::Csr(21, 27, 2730, CsrOp::Rci),
+            ];
+            assert!(all_pass(&RV32::default(), &ins_raw, &ins_dec));
+        }
 
-    #[cfg(feature = "M")]
-    #[test]
-    fn m32_ext() {
-        let ins_raw = [
-            0x02dd8ab3u32,
-            0x02dd9ab3u32,
-            0x02ddaab3u32,
-            0x02ddbab3u32,
-            0x02ddcab3u32,
-            0x02dddab3u32,
-            0x02ddeab3u32,
-            0x02ddfab3u32,
-        ];
-        let ins_dec = [
-            Instr::Op(21, 27, 13, BinaryOp::Mul),
-            Instr::Op(21, 27, 13, BinaryOp::Mulh),
-            Instr::Op(21, 27, 13, BinaryOp::MulhSU),
-            Instr::Op(21, 27, 13, BinaryOp::MulhU),
-            Instr::Op(21, 27, 13, BinaryOp::Div),
-            Instr::Op(21, 27, 13, BinaryOp::DivU),
-            Instr::Op(21, 27, 13, BinaryOp::Rem),
-            Instr::Op(21, 27, 13, BinaryOp::RemU),
-        ];
-        let mut hart = RV32I::default();
-        assert!(all_fail(&hart, &ins_raw));
-        hart.M = true;
-        assert!(all_pass(&hart, &ins_raw, &ins_dec));
-    }
+        #[cfg(feature = "M")]
+        {
+            let ins_raw = [
+                0x02dd8ab3u32,
+                0x02dd9ab3u32,
+                0x02ddaab3u32,
+                0x02ddbab3u32,
+                0x02ddcab3u32,
+                0x02dddab3u32,
+                0x02ddeab3u32,
+                0x02ddfab3u32,
+            ];
+            let ins_dec = [
+                Instr::Op(21, 27, 13, BinaryOp::Mul),
+                Instr::Op(21, 27, 13, BinaryOp::Mulh),
+                Instr::Op(21, 27, 13, BinaryOp::MulhSU),
+                Instr::Op(21, 27, 13, BinaryOp::MulhU),
+                Instr::Op(21, 27, 13, BinaryOp::Div),
+                Instr::Op(21, 27, 13, BinaryOp::DivU),
+                Instr::Op(21, 27, 13, BinaryOp::Rem),
+                Instr::Op(21, 27, 13, BinaryOp::RemU),
+            ];
+            assert!(all_pass(&RV32::default(), &ins_raw, &ins_dec));
+        }
 
-    #[cfg(all(feature = "M", feature = "RV64"))]
-    #[test]
-    fn m64_ext() {
-        let ins_raw = [
-            0x02dd8abbu32,
-            0x02ddcabbu32,
-            0x02dddabbu32,
-            0x02ddeabbu32,
-            0x02ddfabbu32,
-        ];
-        let ins_dec = [
-            Instr::Op(21, 27, 13, BinaryOp::MulW),
-            Instr::Op(21, 27, 13, BinaryOp::DivW),
-            Instr::Op(21, 27, 13, BinaryOp::DivUW),
-            Instr::Op(21, 27, 13, BinaryOp::RemW),
-            Instr::Op(21, 27, 13, BinaryOp::RemUW),
-        ];
-        let mut hart = RV64I::default();
-        assert!(all_fail(&hart, &ins_raw));
-        hart.M = true;
-        assert!(all_pass(&hart, &ins_raw, &ins_dec));
-        let mut hart = RV32I::default();
-        hart.M = true;
-        assert!(all_fail(&hart, &ins_raw));
-    }
+        #[cfg(all(feature = "M", feature = "RV64"))]
+        {
+            let ins_raw = [
+                0x02dd8abbu32,
+                0x02ddcabbu32,
+                0x02dddabbu32,
+                0x02ddeabbu32,
+                0x02ddfabbu32,
+            ];
+            let ins_dec = [
+                Instr::Op(21, 27, 13, BinaryOp::MulW),
+                Instr::Op(21, 27, 13, BinaryOp::DivW),
+                Instr::Op(21, 27, 13, BinaryOp::DivUW),
+                Instr::Op(21, 27, 13, BinaryOp::RemW),
+                Instr::Op(21, 27, 13, BinaryOp::RemUW),
+            ];
+            assert!(all_pass(&RV64::default(), &ins_raw, &ins_dec));
+        }
 
-    #[cfg(feature = "A")]
-    #[test]
-    fn a32_ext() {
-        let ins_raw = [
-            0x140daaafu32,
-            0x1addaaafu32,
-            0x0eddaaafu32,
-            0x06ddaaafu32,
-            0x26ddaaafu32,
-            0x66ddaaafu32,
-            0x46ddaaafu32,
-            0x86ddaaafu32,
-            0xa6ddaaafu32,
-            0xc6ddaaafu32,
-            0xe6ddaaafu32,
-        ];
-        let ins_dec = [
-            Instr::LoadReserved(21, 27, MemOrder::Acquire, MemWidth::W),
-            Instr::StoreConditional(21, 27, 13, MemOrder::Release, MemWidth::W),
-            Instr::Amo(21, 27, 13, MemOrder::AcqRel, MemWidth::W, BinaryOp::Second),
-            Instr::Amo(21, 27, 13, MemOrder::AcqRel, MemWidth::W, BinaryOp::Add),
-            Instr::Amo(21, 27, 13, MemOrder::AcqRel, MemWidth::W, BinaryOp::Xor),
-            Instr::Amo(21, 27, 13, MemOrder::AcqRel, MemWidth::W, BinaryOp::And),
-            Instr::Amo(21, 27, 13, MemOrder::AcqRel, MemWidth::W, BinaryOp::Or),
-            Instr::Amo(21, 27, 13, MemOrder::AcqRel, MemWidth::W, BinaryOp::Min),
-            Instr::Amo(21, 27, 13, MemOrder::AcqRel, MemWidth::W, BinaryOp::Max),
-            Instr::Amo(21, 27, 13, MemOrder::AcqRel, MemWidth::W, BinaryOp::MinU),
-            Instr::Amo(21, 27, 13, MemOrder::AcqRel, MemWidth::W, BinaryOp::MaxU),
-        ];
-        let mut hart = RV32I::default();
-        assert!(all_fail(&hart, &ins_raw));
-        hart.A = true;
-        assert!(all_pass(&hart, &ins_raw, &ins_dec));
-    }
+        #[cfg(feature = "A")]
+        {
+            let ins_raw = [
+                0x140daaafu32,
+                0x1addaaafu32,
+                0x0eddaaafu32,
+                0x06ddaaafu32,
+                0x26ddaaafu32,
+                0x66ddaaafu32,
+                0x46ddaaafu32,
+                0x86ddaaafu32,
+                0xa6ddaaafu32,
+                0xc6ddaaafu32,
+                0xe6ddaaafu32,
+            ];
+            let ins_dec = [
+                Instr::LoadReserved(21, 27, MemOrder::Acquire, MemWidth::W),
+                Instr::StoreConditional(21, 27, 13, MemOrder::Release, MemWidth::W),
+                Instr::Amo(21, 27, 13, MemOrder::AcqRel, MemWidth::W, BinaryOp::Second),
+                Instr::Amo(21, 27, 13, MemOrder::AcqRel, MemWidth::W, BinaryOp::Add),
+                Instr::Amo(21, 27, 13, MemOrder::AcqRel, MemWidth::W, BinaryOp::Xor),
+                Instr::Amo(21, 27, 13, MemOrder::AcqRel, MemWidth::W, BinaryOp::And),
+                Instr::Amo(21, 27, 13, MemOrder::AcqRel, MemWidth::W, BinaryOp::Or),
+                Instr::Amo(21, 27, 13, MemOrder::AcqRel, MemWidth::W, BinaryOp::Min),
+                Instr::Amo(21, 27, 13, MemOrder::AcqRel, MemWidth::W, BinaryOp::Max),
+                Instr::Amo(21, 27, 13, MemOrder::AcqRel, MemWidth::W, BinaryOp::MinU),
+                Instr::Amo(21, 27, 13, MemOrder::AcqRel, MemWidth::W, BinaryOp::MaxU),
+            ];
+            assert!(all_pass(&RV32::default(), &ins_raw, &ins_dec));
+        }
 
-    #[cfg(all(feature = "A", feature = "RV64"))]
-    #[test]
-    fn a64_ext() {
-        let ins_raw = [
-            0x140dbaafu32,
-            0x1addbaafu32,
-            0x0eddbaafu32,
-            0x06ddbaafu32,
-            0x26ddbaafu32,
-            0x66ddbaafu32,
-            0x46ddbaafu32,
-            0x86ddbaafu32,
-            0xa6ddbaafu32,
-            0xc6ddbaafu32,
-            0xe6ddbaafu32,
-        ];
-        let ins_dec = [
-            Instr::LoadReserved(21, 27, MemOrder::Acquire, MemWidth::D),
-            Instr::StoreConditional(21, 27, 13, MemOrder::Release, MemWidth::D),
-            Instr::Amo(21, 27, 13, MemOrder::AcqRel, MemWidth::D, BinaryOp::Second),
-            Instr::Amo(21, 27, 13, MemOrder::AcqRel, MemWidth::D, BinaryOp::Add),
-            Instr::Amo(21, 27, 13, MemOrder::AcqRel, MemWidth::D, BinaryOp::Xor),
-            Instr::Amo(21, 27, 13, MemOrder::AcqRel, MemWidth::D, BinaryOp::And),
-            Instr::Amo(21, 27, 13, MemOrder::AcqRel, MemWidth::D, BinaryOp::Or),
-            Instr::Amo(21, 27, 13, MemOrder::AcqRel, MemWidth::D, BinaryOp::Min),
-            Instr::Amo(21, 27, 13, MemOrder::AcqRel, MemWidth::D, BinaryOp::Max),
-            Instr::Amo(21, 27, 13, MemOrder::AcqRel, MemWidth::D, BinaryOp::MinU),
-            Instr::Amo(21, 27, 13, MemOrder::AcqRel, MemWidth::D, BinaryOp::MaxU),
-        ];
-        let mut hart = RV64I::default();
-        assert!(all_fail(&hart, &ins_raw));
-        hart.A = true;
-        assert!(all_pass(&hart, &ins_raw, &ins_dec));
-        let mut hart = RV32I::default();
-        hart.A = true;
-        assert!(all_fail(&hart, &ins_raw));
-    }
+        #[cfg(all(feature = "A", feature = "RV64"))]
+        {
+            let ins_raw = [
+                0x140dbaafu32,
+                0x1addbaafu32,
+                0x0eddbaafu32,
+                0x06ddbaafu32,
+                0x26ddbaafu32,
+                0x66ddbaafu32,
+                0x46ddbaafu32,
+                0x86ddbaafu32,
+                0xa6ddbaafu32,
+                0xc6ddbaafu32,
+                0xe6ddbaafu32,
+            ];
+            let ins_dec = [
+                Instr::LoadReserved(21, 27, MemOrder::Acquire, MemWidth::D),
+                Instr::StoreConditional(21, 27, 13, MemOrder::Release, MemWidth::D),
+                Instr::Amo(21, 27, 13, MemOrder::AcqRel, MemWidth::D, BinaryOp::Second),
+                Instr::Amo(21, 27, 13, MemOrder::AcqRel, MemWidth::D, BinaryOp::Add),
+                Instr::Amo(21, 27, 13, MemOrder::AcqRel, MemWidth::D, BinaryOp::Xor),
+                Instr::Amo(21, 27, 13, MemOrder::AcqRel, MemWidth::D, BinaryOp::And),
+                Instr::Amo(21, 27, 13, MemOrder::AcqRel, MemWidth::D, BinaryOp::Or),
+                Instr::Amo(21, 27, 13, MemOrder::AcqRel, MemWidth::D, BinaryOp::Min),
+                Instr::Amo(21, 27, 13, MemOrder::AcqRel, MemWidth::D, BinaryOp::Max),
+                Instr::Amo(21, 27, 13, MemOrder::AcqRel, MemWidth::D, BinaryOp::MinU),
+                Instr::Amo(21, 27, 13, MemOrder::AcqRel, MemWidth::D, BinaryOp::MaxU),
+            ];
+            assert!(all_pass(&RV64::default(), &ins_raw, &ins_dec));
+        }
 
-    #[cfg(feature = "F")]
-    #[test]
-    fn f32_ext() {
-        let ins_raw = [
-            0xaaadaa87u32,
-            0xaadda527u32,
-            0x38dd8ac3u32,
-            0x38dd9ac7u32,
-            0x38ddaacbu32,
-            0x38ddbacfu32,
-            0x00ddcad3u32,
-            0x08ddfad3u32,
-            0x10ddfad3u32,
-            0x18ddfad3u32,
-            0x580dfad3u32,
-            0x20dd8ad3u32,
-            0x20dd9ad3u32,
-            0x20ddaad3u32,
-            0x28dd8ad3u32,
-            0x28dd9ad3u32,
-            0xc00dfad3u32,
-            0xc01dfad3u32,
-            0xe00d8ad3u32,
-            0xa0ddaad3u32,
-            0xa0dd9ad3u32,
-            0xa0dd8ad3u32,
-            0xe00d9ad3u32,
-            0xd00dfad3u32,
-            0xd01dfad3u32,
-            0xf00d8ad3u32,
-        ];
-        let ins_dec = [
-            Instr::LoadFp(21, 27, -1366, Precision::S),
-            Instr::StoreFp(27, 13, -1366, Precision::S),
-            Instr::FpOp3(
-                21,
-                27,
-                13,
-                7,
-                RoundMode::Rne,
-                Precision::S,
-                FpTernaryOp::MAdd,
-            ),
-            Instr::FpOp3(
-                21,
-                27,
-                13,
-                7,
-                RoundMode::Rtz,
-                Precision::S,
-                FpTernaryOp::MSub,
-            ),
-            Instr::FpOp3(
-                21,
-                27,
-                13,
-                7,
-                RoundMode::Rdn,
-                Precision::S,
-                FpTernaryOp::NMSub,
-            ),
-            Instr::FpOp3(
-                21,
-                27,
-                13,
-                7,
-                RoundMode::Rup,
-                Precision::S,
-                FpTernaryOp::NMAdd,
-            ),
-            Instr::FpOp2(21, 27, 13, RoundMode::Rmm, Precision::S, FpBinaryOp::Add),
-            Instr::FpOp2(21, 27, 13, RoundMode::Dyn, Precision::S, FpBinaryOp::Sub),
-            Instr::FpOp2(21, 27, 13, RoundMode::Dyn, Precision::S, FpBinaryOp::Mul),
-            Instr::FpOp2(21, 27, 13, RoundMode::Dyn, Precision::S, FpBinaryOp::Div),
-            Instr::FpOp(21, 27, RoundMode::Dyn, Precision::S, FpUnaryOp::Sqrt),
-            Instr::FpOp2(21, 27, 13, RoundMode::None, Precision::S, FpBinaryOp::SgnJ),
-            Instr::FpOp2(21, 27, 13, RoundMode::None, Precision::S, FpBinaryOp::SgnJN),
-            Instr::FpOp2(21, 27, 13, RoundMode::None, Precision::S, FpBinaryOp::SgnJX),
-            Instr::FpOp2(21, 27, 13, RoundMode::None, Precision::S, FpBinaryOp::Min),
-            Instr::FpOp2(21, 27, 13, RoundMode::None, Precision::S, FpBinaryOp::Max),
-            Instr::FpCvtGp(21, 27, RoundMode::Dyn, Precision::S, FpGpOp::W),
-            Instr::FpCvtGp(21, 27, RoundMode::Dyn, Precision::S, FpGpOp::WU),
-            Instr::FpCvtGp(21, 27, RoundMode::None, Precision::S, FpGpOp::MV),
-            Instr::FpCmp(21, 27, 13, Precision::S, FpCmpCond::Eq),
-            Instr::FpCmp(21, 27, 13, Precision::S, FpCmpCond::Lt),
-            Instr::FpCmp(21, 27, 13, Precision::S, FpCmpCond::Le),
-            Instr::FpCvtGp(21, 27, RoundMode::None, Precision::S, FpGpOp::Class),
-            Instr::GpCvtFp(21, 27, RoundMode::Dyn, Precision::S, GpFpOp::W),
-            Instr::GpCvtFp(21, 27, RoundMode::Dyn, Precision::S, GpFpOp::WU),
-            Instr::GpCvtFp(21, 27, RoundMode::None, Precision::S, GpFpOp::MV),
-        ];
-        let mut hart = RV32I::default();
-        assert!(all_fail(&hart, &ins_raw));
-        hart.F = true;
-        assert!(all_pass(&hart, &ins_raw, &ins_dec));
-    }
+        #[cfg(feature = "F")]
+        {
+            let ins_raw = [
+                0xaaadaa87u32,
+                0xaadda527u32,
+                0x38dd8ac3u32,
+                0x38dd9ac7u32,
+                0x38ddaacbu32,
+                0x38ddbacfu32,
+                0x00ddcad3u32,
+                0x08ddfad3u32,
+                0x10ddfad3u32,
+                0x18ddfad3u32,
+                0x580dfad3u32,
+                0x20dd8ad3u32,
+                0x20dd9ad3u32,
+                0x20ddaad3u32,
+                0x28dd8ad3u32,
+                0x28dd9ad3u32,
+                0xc00dfad3u32,
+                0xc01dfad3u32,
+                0xe00d8ad3u32,
+                0xa0ddaad3u32,
+                0xa0dd9ad3u32,
+                0xa0dd8ad3u32,
+                0xe00d9ad3u32,
+                0xd00dfad3u32,
+                0xd01dfad3u32,
+                0xf00d8ad3u32,
+            ];
+            let ins_dec = [
+                Instr::LoadFp(21, 27, -1366, Precision::S),
+                Instr::StoreFp(27, 13, -1366, Precision::S),
+                Instr::FpOp3(
+                    21,
+                    27,
+                    13,
+                    7,
+                    RoundMode::Rne,
+                    Precision::S,
+                    FpTernaryOp::MAdd,
+                ),
+                Instr::FpOp3(
+                    21,
+                    27,
+                    13,
+                    7,
+                    RoundMode::Rtz,
+                    Precision::S,
+                    FpTernaryOp::MSub,
+                ),
+                Instr::FpOp3(
+                    21,
+                    27,
+                    13,
+                    7,
+                    RoundMode::Rdn,
+                    Precision::S,
+                    FpTernaryOp::NMSub,
+                ),
+                Instr::FpOp3(
+                    21,
+                    27,
+                    13,
+                    7,
+                    RoundMode::Rup,
+                    Precision::S,
+                    FpTernaryOp::NMAdd,
+                ),
+                Instr::FpOp2(21, 27, 13, RoundMode::Rmm, Precision::S, FpBinaryOp::Add),
+                Instr::FpOp2(21, 27, 13, RoundMode::Dyn, Precision::S, FpBinaryOp::Sub),
+                Instr::FpOp2(21, 27, 13, RoundMode::Dyn, Precision::S, FpBinaryOp::Mul),
+                Instr::FpOp2(21, 27, 13, RoundMode::Dyn, Precision::S, FpBinaryOp::Div),
+                Instr::FpOp(21, 27, RoundMode::Dyn, Precision::S, FpUnaryOp::Sqrt),
+                Instr::FpOp2(21, 27, 13, RoundMode::None, Precision::S, FpBinaryOp::SgnJ),
+                Instr::FpOp2(21, 27, 13, RoundMode::None, Precision::S, FpBinaryOp::SgnJN),
+                Instr::FpOp2(21, 27, 13, RoundMode::None, Precision::S, FpBinaryOp::SgnJX),
+                Instr::FpOp2(21, 27, 13, RoundMode::None, Precision::S, FpBinaryOp::Min),
+                Instr::FpOp2(21, 27, 13, RoundMode::None, Precision::S, FpBinaryOp::Max),
+                Instr::FpCvtGp(21, 27, RoundMode::Dyn, Precision::S, FpGpOp::W),
+                Instr::FpCvtGp(21, 27, RoundMode::Dyn, Precision::S, FpGpOp::WU),
+                Instr::FpCvtGp(21, 27, RoundMode::None, Precision::S, FpGpOp::MV),
+                Instr::FpCmp(21, 27, 13, Precision::S, FpCmpCond::Eq),
+                Instr::FpCmp(21, 27, 13, Precision::S, FpCmpCond::Lt),
+                Instr::FpCmp(21, 27, 13, Precision::S, FpCmpCond::Le),
+                Instr::FpCvtGp(21, 27, RoundMode::None, Precision::S, FpGpOp::Class),
+                Instr::GpCvtFp(21, 27, RoundMode::Dyn, Precision::S, GpFpOp::W),
+                Instr::GpCvtFp(21, 27, RoundMode::Dyn, Precision::S, GpFpOp::WU),
+                Instr::GpCvtFp(21, 27, RoundMode::None, Precision::S, GpFpOp::MV),
+            ];
+            assert!(all_pass(&RV32::default(), &ins_raw, &ins_dec));
+        }
 
-    #[cfg(all(feature = "F", feature = "RV64"))]
-    #[test]
-    fn f64_ext() {
-        let ins_raw = [0xc02dfad3u32, 0xc03dfad3u32, 0xd02dfad3u32, 0xd03dfad3u32];
-        let ins_dec = [
-            Instr::FpCvtGp(21, 27, RoundMode::Dyn, Precision::S, FpGpOp::L),
-            Instr::FpCvtGp(21, 27, RoundMode::Dyn, Precision::S, FpGpOp::LU),
-            Instr::GpCvtFp(21, 27, RoundMode::Dyn, Precision::S, GpFpOp::L),
-            Instr::GpCvtFp(21, 27, RoundMode::Dyn, Precision::S, GpFpOp::LU),
-        ];
-        let mut hart = RV64I::default();
-        assert!(all_fail(&hart, &ins_raw));
-        hart.F = true;
-        assert!(all_pass(&hart, &ins_raw, &ins_dec));
-        let mut hart = RV32I::default();
-        hart.F = true;
-        assert!(all_fail(&hart, &ins_raw));
-    }
+        #[cfg(all(feature = "F", feature = "RV64"))]
+        {
+            let ins_raw = [0xc02dfad3u32, 0xc03dfad3u32, 0xd02dfad3u32, 0xd03dfad3u32];
+            let ins_dec = [
+                Instr::FpCvtGp(21, 27, RoundMode::Dyn, Precision::S, FpGpOp::L),
+                Instr::FpCvtGp(21, 27, RoundMode::Dyn, Precision::S, FpGpOp::LU),
+                Instr::GpCvtFp(21, 27, RoundMode::Dyn, Precision::S, GpFpOp::L),
+                Instr::GpCvtFp(21, 27, RoundMode::Dyn, Precision::S, GpFpOp::LU),
+            ];
+            assert!(all_pass(&RV64::default(), &ins_raw, &ins_dec));
+        }
 
-    #[cfg(feature = "D")]
-    #[test]
-    fn d32_ext() {
-        let ins_raw = [
-            0xaaadba87u32,
-            0xaaddb527u32,
-            0x3add8ac3u32,
-            0x3add9ac7u32,
-            0x3addaacbu32,
-            0x3addbacfu32,
-            0x02ddcad3u32,
-            0x0addfad3u32,
-            0x12ddfad3u32,
-            0x1addfad3u32,
-            0x5a0dfad3u32,
-            0x22dd8ad3u32,
-            0x22dd9ad3u32,
-            0x22ddaad3u32,
-            0x2add8ad3u32,
-            0x2add9ad3u32,
-            0x401dfad3u32,
-            0x420d8ad3u32,
-            0xa2ddaad3u32,
-            0xa2dd9ad3u32,
-            0xa2dd8ad3u32,
-            0xe20d9ad3u32,
-            0xc20dfad3u32,
-            0xc21dfad3u32,
-            0xd20d8ad3u32,
-            0xd21d8ad3u32,
-        ];
-        let ins_dec = [
-            Instr::LoadFp(21, 27, -1366, Precision::D),
-            Instr::StoreFp(27, 13, -1366, Precision::D),
-            Instr::FpOp3(
-                21,
-                27,
-                13,
-                7,
-                RoundMode::Rne,
-                Precision::D,
-                FpTernaryOp::MAdd,
-            ),
-            Instr::FpOp3(
-                21,
-                27,
-                13,
-                7,
-                RoundMode::Rtz,
-                Precision::D,
-                FpTernaryOp::MSub,
-            ),
-            Instr::FpOp3(
-                21,
-                27,
-                13,
-                7,
-                RoundMode::Rdn,
-                Precision::D,
-                FpTernaryOp::NMSub,
-            ),
-            Instr::FpOp3(
-                21,
-                27,
-                13,
-                7,
-                RoundMode::Rup,
-                Precision::D,
-                FpTernaryOp::NMAdd,
-            ),
-            Instr::FpOp2(21, 27, 13, RoundMode::Rmm, Precision::D, FpBinaryOp::Add),
-            Instr::FpOp2(21, 27, 13, RoundMode::Dyn, Precision::D, FpBinaryOp::Sub),
-            Instr::FpOp2(21, 27, 13, RoundMode::Dyn, Precision::D, FpBinaryOp::Mul),
-            Instr::FpOp2(21, 27, 13, RoundMode::Dyn, Precision::D, FpBinaryOp::Div),
-            Instr::FpOp(21, 27, RoundMode::Dyn, Precision::D, FpUnaryOp::Sqrt),
-            Instr::FpOp2(21, 27, 13, RoundMode::None, Precision::D, FpBinaryOp::SgnJ),
-            Instr::FpOp2(21, 27, 13, RoundMode::None, Precision::D, FpBinaryOp::SgnJN),
-            Instr::FpOp2(21, 27, 13, RoundMode::None, Precision::D, FpBinaryOp::SgnJX),
-            Instr::FpOp2(21, 27, 13, RoundMode::None, Precision::D, FpBinaryOp::Min),
-            Instr::FpOp2(21, 27, 13, RoundMode::None, Precision::D, FpBinaryOp::Max),
-            Instr::FpCvtFp(21, 27, RoundMode::Dyn, Precision::D, Precision::S),
-            Instr::FpCvtFp(21, 27, RoundMode::Rne, Precision::S, Precision::D),
-            Instr::FpCmp(21, 27, 13, Precision::D, FpCmpCond::Eq),
-            Instr::FpCmp(21, 27, 13, Precision::D, FpCmpCond::Lt),
-            Instr::FpCmp(21, 27, 13, Precision::D, FpCmpCond::Le),
-            Instr::FpCvtGp(21, 27, RoundMode::None, Precision::D, FpGpOp::Class),
-            Instr::FpCvtGp(21, 27, RoundMode::Dyn, Precision::D, FpGpOp::W),
-            Instr::FpCvtGp(21, 27, RoundMode::Dyn, Precision::D, FpGpOp::WU),
-            Instr::GpCvtFp(21, 27, RoundMode::Rne, Precision::D, GpFpOp::W),
-            Instr::GpCvtFp(21, 27, RoundMode::Rne, Precision::D, GpFpOp::WU),
-        ];
-        let mut hart = RV32I::default();
-        hart.F = true;
-        assert!(all_fail(&hart, &ins_raw));
-        hart.D = true;
-        assert!(all_pass(&hart, &ins_raw, &ins_dec));
-    }
+        #[cfg(feature = "D")]
+        {
+            let ins_raw = [
+                0xaaadba87u32,
+                0xaaddb527u32,
+                0x3add8ac3u32,
+                0x3add9ac7u32,
+                0x3addaacbu32,
+                0x3addbacfu32,
+                0x02ddcad3u32,
+                0x0addfad3u32,
+                0x12ddfad3u32,
+                0x1addfad3u32,
+                0x5a0dfad3u32,
+                0x22dd8ad3u32,
+                0x22dd9ad3u32,
+                0x22ddaad3u32,
+                0x2add8ad3u32,
+                0x2add9ad3u32,
+                0x401dfad3u32,
+                0x420d8ad3u32,
+                0xa2ddaad3u32,
+                0xa2dd9ad3u32,
+                0xa2dd8ad3u32,
+                0xe20d9ad3u32,
+                0xc20dfad3u32,
+                0xc21dfad3u32,
+                0xd20d8ad3u32,
+                0xd21d8ad3u32,
+            ];
+            let ins_dec = [
+                Instr::LoadFp(21, 27, -1366, Precision::D),
+                Instr::StoreFp(27, 13, -1366, Precision::D),
+                Instr::FpOp3(
+                    21,
+                    27,
+                    13,
+                    7,
+                    RoundMode::Rne,
+                    Precision::D,
+                    FpTernaryOp::MAdd,
+                ),
+                Instr::FpOp3(
+                    21,
+                    27,
+                    13,
+                    7,
+                    RoundMode::Rtz,
+                    Precision::D,
+                    FpTernaryOp::MSub,
+                ),
+                Instr::FpOp3(
+                    21,
+                    27,
+                    13,
+                    7,
+                    RoundMode::Rdn,
+                    Precision::D,
+                    FpTernaryOp::NMSub,
+                ),
+                Instr::FpOp3(
+                    21,
+                    27,
+                    13,
+                    7,
+                    RoundMode::Rup,
+                    Precision::D,
+                    FpTernaryOp::NMAdd,
+                ),
+                Instr::FpOp2(21, 27, 13, RoundMode::Rmm, Precision::D, FpBinaryOp::Add),
+                Instr::FpOp2(21, 27, 13, RoundMode::Dyn, Precision::D, FpBinaryOp::Sub),
+                Instr::FpOp2(21, 27, 13, RoundMode::Dyn, Precision::D, FpBinaryOp::Mul),
+                Instr::FpOp2(21, 27, 13, RoundMode::Dyn, Precision::D, FpBinaryOp::Div),
+                Instr::FpOp(21, 27, RoundMode::Dyn, Precision::D, FpUnaryOp::Sqrt),
+                Instr::FpOp2(21, 27, 13, RoundMode::None, Precision::D, FpBinaryOp::SgnJ),
+                Instr::FpOp2(21, 27, 13, RoundMode::None, Precision::D, FpBinaryOp::SgnJN),
+                Instr::FpOp2(21, 27, 13, RoundMode::None, Precision::D, FpBinaryOp::SgnJX),
+                Instr::FpOp2(21, 27, 13, RoundMode::None, Precision::D, FpBinaryOp::Min),
+                Instr::FpOp2(21, 27, 13, RoundMode::None, Precision::D, FpBinaryOp::Max),
+                Instr::FpCvtFp(21, 27, RoundMode::Dyn, Precision::D, Precision::S),
+                Instr::FpCvtFp(21, 27, RoundMode::Rne, Precision::S, Precision::D),
+                Instr::FpCmp(21, 27, 13, Precision::D, FpCmpCond::Eq),
+                Instr::FpCmp(21, 27, 13, Precision::D, FpCmpCond::Lt),
+                Instr::FpCmp(21, 27, 13, Precision::D, FpCmpCond::Le),
+                Instr::FpCvtGp(21, 27, RoundMode::None, Precision::D, FpGpOp::Class),
+                Instr::FpCvtGp(21, 27, RoundMode::Dyn, Precision::D, FpGpOp::W),
+                Instr::FpCvtGp(21, 27, RoundMode::Dyn, Precision::D, FpGpOp::WU),
+                Instr::GpCvtFp(21, 27, RoundMode::Rne, Precision::D, GpFpOp::W),
+                Instr::GpCvtFp(21, 27, RoundMode::Rne, Precision::D, GpFpOp::WU),
+            ];
+            assert!(all_pass(&RV32::default(), &ins_raw, &ins_dec));
+        }
 
-    #[cfg(all(feature = "D", feature = "RV64"))]
-    #[test]
-    fn d64_ext() {
-        let ins_raw = [
-            0xc22dfad3u32,
-            0xc23dfad3u32,
-            0xe20d8ad3u32,
-            0xd22dfad3u32,
-            0xd23dfad3u32,
-            0xf20d8ad3u32,
-        ];
-        let ins_dec = [
-            Instr::FpCvtGp(21, 27, RoundMode::Dyn, Precision::D, FpGpOp::L),
-            Instr::FpCvtGp(21, 27, RoundMode::Dyn, Precision::D, FpGpOp::LU),
-            Instr::FpCvtGp(21, 27, RoundMode::None, Precision::D, FpGpOp::MV),
-            Instr::GpCvtFp(21, 27, RoundMode::Dyn, Precision::D, GpFpOp::L),
-            Instr::GpCvtFp(21, 27, RoundMode::Dyn, Precision::D, GpFpOp::LU),
-            Instr::GpCvtFp(21, 27, RoundMode::None, Precision::D, GpFpOp::MV),
-        ];
-        let mut hart = RV64I::default();
-        hart.F = true;
-        assert!(all_fail(&hart, &ins_raw));
-        hart.D = true;
-        assert!(all_pass(&hart, &ins_raw, &ins_dec));
-        let mut hart = RV32I::default();
-        hart.F = true;
-        hart.D = true;
-        assert!(all_fail(&hart, &ins_raw));
+        #[cfg(all(feature = "D", feature = "RV64"))]
+        {
+            let ins_raw = [
+                0xc22dfad3u32,
+                0xc23dfad3u32,
+                0xe20d8ad3u32,
+                0xd22dfad3u32,
+                0xd23dfad3u32,
+                0xf20d8ad3u32,
+            ];
+            let ins_dec = [
+                Instr::FpCvtGp(21, 27, RoundMode::Dyn, Precision::D, FpGpOp::L),
+                Instr::FpCvtGp(21, 27, RoundMode::Dyn, Precision::D, FpGpOp::LU),
+                Instr::FpCvtGp(21, 27, RoundMode::None, Precision::D, FpGpOp::MV),
+                Instr::GpCvtFp(21, 27, RoundMode::Dyn, Precision::D, GpFpOp::L),
+                Instr::GpCvtFp(21, 27, RoundMode::Dyn, Precision::D, GpFpOp::LU),
+                Instr::GpCvtFp(21, 27, RoundMode::None, Precision::D, GpFpOp::MV),
+            ];
+            assert!(all_pass(&RV64::default(), &ins_raw, &ins_dec));
+        }
     }
 }

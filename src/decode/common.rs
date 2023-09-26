@@ -1,10 +1,67 @@
 // common decoding functions
 
-use crate::{hart::HartIsa, utils::Maybe, xlen::XlenT};
+use std::{
+    cmp::Eq,
+    default::Default,
+    ops::{BitAnd, Shl, Shr, Sub},
+};
 
-pub const ZERO: u8 = 0;
-pub const RA: u8 = 1;
-pub const SP: u8 = 2;
+use crate::xlen::XlenT;
+
+pub const GP_ZERO: u8 = 0;
+pub const GP_RA: u8 = 1;
+pub const GP_SP: u8 = 2;
+
+/// enabled isa extension flags
+#[allow(non_snake_case)]
+#[derive(Debug, Clone)]
+pub struct Isa<Xlen: XlenT> {
+    /// Atomic
+    #[cfg(feature = "A")]
+    pub A: bool,
+    /// Compressed
+    #[cfg(feature = "C")]
+    pub C: bool,
+    /// Double-precision floating-point
+    #[cfg(feature = "D")]
+    pub D: bool,
+    /// Single-precision floating-point
+    #[cfg(feature = "F")]
+    pub F: bool,
+    /// Integer Multiply/Divide
+    #[cfg(feature = "M")]
+    pub M: bool,
+    /// CSR instructions
+    #[cfg(feature = "Zicsr")]
+    pub Zicsr: bool,
+    /// Instruction-Fetch Fence
+    #[cfg(feature = "Zifencei")]
+    pub Zifencei: bool,
+
+    xlen: std::marker::PhantomData<Xlen>,
+}
+
+impl<Xlen: XlenT> Default for Isa<Xlen> {
+    fn default() -> Self {
+        Self {
+            #[cfg(feature = "A")]
+            A: true,
+            #[cfg(feature = "C")]
+            C: true,
+            #[cfg(feature = "D")]
+            D: true,
+            #[cfg(feature = "F")]
+            F: true,
+            #[cfg(feature = "M")]
+            M: true,
+            #[cfg(feature = "Zicsr")]
+            Zicsr: true,
+            #[cfg(feature = "Zifencei")]
+            Zifencei: true,
+            xlen: Default::default(),
+        }
+    }
+}
 
 /// sign-extend any length imm to i32
 pub fn sext(imm: u32, sign_bit: u32) -> i32 {
@@ -49,26 +106,10 @@ macro_rules! if_rv128 {
     };
 }
 
-/// # Arguments
-///
-/// * `id` - extension id, e.g. `A`
-/// * `lit` - extension literal, e.g. `"A"`
-/// * `self` - `self` (`HartIsa`) reference
-/// * `e_true` - expression to be evaluated if `self.id` is enabled
-/// * `e_false` - expression to be evaluated if `self.id` is disabled
-///
-/// if e_false is not provided, it will be `Err(())`
-/// and `e_true` will be `Ok(e_true)`
-///
-/// # Note
-///
-/// `lit` is required since rust can't stringify ident,
-/// see [this](https://www.reddit.com/r/rust/comments/snmses/how_to_use_stringify_inside_cfgfeature/)
-///
 macro_rules! if_ext {
-    ($id:ident, $lit:literal, $self:ident, $e_true:expr, $e_false:expr) => {{
+    ($id:ident, $lit:literal, $isa:expr, $e_true:expr, $e_false:expr) => {{
         #[cfg(feature = $lit)]
-        if $self.$id {
+        if $isa.$id {
             $e_true
         } else {
             $e_false
@@ -78,62 +119,57 @@ macro_rules! if_ext {
             $e_false
         }
     }};
-    ($id:ident, $lit:literal, $self:ident, $e:expr) => {
-        if_ext!($id, $lit, $self, Ok($e), Err(()))
+    ($id:ident, $lit:literal, $isa:expr, $e:expr) => {
+        if_ext!($id, $lit, $isa, Ok($e), Err(()))
     };
 }
 
 macro_rules! if_ext_a {
-    ($self:ident, $($e:expr),*) => {
-        if_ext!(A, "A", $self, $($e),*)
+    ($isa:expr, $($e:expr), *) => {
+        if_ext!(A, "A", $isa, $($e), *)
     };
 }
 
 macro_rules! if_ext_c {
-    ($self:ident, $($e:expr),*) => {
-        if_ext!(C, "C", $self, $($e),*)
+    ($isa:expr, $($e:expr), *) => {
+        if_ext!(C, "C", $isa, $($e), *)
     };
 }
 
 macro_rules! if_ext_d {
-    ($self:ident, $($e:expr),*) => {
-        if_ext!(D, "D", $self, $($e),*)
+    ($isa:expr, $($e:expr), *) => {
+        if_ext!(D, "D", $isa, $($e), *)
     };
 }
 
 macro_rules! if_ext_f {
-    ($self:ident, $($e:expr),*) => {
-        if_ext!(F, "F", $self, $($e),*)
+    ($isa:expr, $($e:expr), *) => {
+        if_ext!(F, "F", $isa, $($e), *)
     };
 }
 
 macro_rules! if_ext_m {
-    ($self:ident, $($e:expr),*) => {
-        if_ext!(M, "M", $self, $($e),*)
+    ($isa:expr, $($e:expr), *) => {
+        if_ext!(M, "M", $isa, $($e), *)
     };
 }
 
 macro_rules! if_ext_zicsr {
-    ($self:ident, $($e:expr),*) => {
-        if_ext!(Zicsr, "Zicsr", $self, $($e),*)
+    ($isa:expr, $($e:expr), *) => {
+        if_ext!(Zicsr, "Zicsr", $isa, $($e), *)
     };
 }
 
 macro_rules! if_ext_zifencei {
-    ($self:ident, $($e:expr),*) => {
-        if_ext!(Zifencei, "Zifencei", $self, $($e),*)
+    ($isa:expr, $($e:expr), *) => {
+        if_ext!(Zifencei, "Zifencei", $isa, $($e), *)
     };
 }
 
 /// `result` = `val`\[`high`:`low`\]
 pub fn select_bits<T>(val: T, high: u8, low: u8) -> T
 where
-    T: Copy
-        + From<u8>
-        + std::ops::Shr<Output = T>
-        + std::ops::Shl<Output = T>
-        + std::ops::BitAnd<Output = T>
-        + std::ops::Sub<Output = T>,
+    T: Copy + From<u8> + Shr<Output = T> + Shl<Output = T> + BitAnd<Output = T> + Sub<Output = T>,
 {
     let one = T::from(1);
     let len = T::from(high - low + 1);
@@ -144,7 +180,7 @@ where
 /// test if `bit` is set in `val`
 pub fn test_bit<T>(val: T, bit: u8) -> bool
 where
-    T: Copy + From<u8> + std::ops::Shl<Output = T> + std::ops::BitAnd<Output = T> + std::cmp::Eq,
+    T: Copy + From<u8> + Shl<Output = T> + BitAnd<Output = T> + Eq,
 {
     let mask = T::from(1) << T::from(bit);
     val & mask == mask
@@ -160,7 +196,7 @@ where
 /// * `(high, low)+` - bit groups to be selected
 ///
 macro_rules! shuffle_bits {
-    ($val:expr, $shift:literal, $($high:literal, $low:literal),*) => {
+    ($val:expr, $shift:literal, $($high:literal, $low:literal), *) => {
         {
             let val = $val as u32;
             let mut res = 0;
@@ -180,6 +216,7 @@ mod tests {
 
     #[test]
     fn sanity() {
+        assert_eq!(sext(5, 2), -3);
         assert_eq!(select_bits(0b0011_1000, 6, 2), 0b01110);
         assert_eq!(select_bits(0b0011_1000, 5, 5), 0b1);
         assert!(!test_bit(0b0011_1000, 6));

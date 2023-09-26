@@ -18,8 +18,6 @@ A = []
 C = []
 # Double-Precision Floating-Point
 D = ["F"]
-# RV32E
-E = [] # still broken
 # Single-Precision Floating-Point
 F = ["Zicsr"]
 # Integer Multiply/Divide
@@ -35,4 +33,4 @@ Zifencei = []
 
 G = ["M", "A", "F", "D", "Zicsr", "Zifencei"]
 default = ["all"]
-all = ["RV64", "G", "C", "E"]
+all = ["RV64", "G", "C"]

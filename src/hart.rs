@@ -1,66 +1,57 @@
-use crate::{fpu::Fpu, xlen::XlenT};
+use crate::{
+    decode::FrontEnd,
+    memory::Mem,
+    privilege::PrivCtrl,
+    utils::Maybe,
+    xlen::{Cast, XlenT},
+};
 
-#[repr(align(32))]
+#[cfg(feature = "F")]
+use crate::fpu::Fpu;
+
+/// holds state of the hart
 #[derive(Debug, Clone)]
-pub struct Hart<Xlen: XlenT, const EMB: bool> {
-    gp: [Xlen; 32],
+pub struct Hart<Xlen: XlenT> {
+    /// general purpose registers
+    gprs: [Xlen; 32],
     #[cfg(feature = "F")]
-    pub fpu: Fpu<Xlen>,
-    pub pc: Xlen,
-    pub isa: HartIsa<Xlen>,
+    pub fpu: Fpu,
+    #[cfg(feature = "V")]
+    pub vpu: Vpu,
+    pub fe: FrontEnd<Xlen>,
+    pub mem: Mem,
+    pub priv_ctrl: PrivCtrl,
+    /// program counter
+    pc: Xlen,
+    pub stop_tok: bool,
 }
 
-/// each flag corresponds to a feature in Cargo.toml\
-/// act as a fast query misa register
-#[allow(non_snake_case)]
-#[derive(Debug, Clone, Default)]
-pub struct HartIsa<Xlen: XlenT> {
-    /// Atomic
-    #[cfg(feature = "A")]
-    pub A: bool,
-    /// Compressed
-    #[cfg(feature = "C")]
-    pub C: bool,
-    /// Double-precision floating-point
-    #[cfg(feature = "D")]
-    pub D: bool,
-    /// Single-precision floating-point
-    #[cfg(feature = "F")]
-    pub F: bool,
-    /// Integer Multiply/Divide
-    #[cfg(feature = "M")]
-    pub M: bool,
-    /// CSR instructions
-    #[cfg(feature = "Zicsr")]
-    pub Zicsr: bool,
-    /// Instruction-Fetch Fence
-    #[cfg(feature = "Zifencei")]
-    pub Zifencei: bool,
-
-    xlen: std::marker::PhantomData<Xlen>,
+impl<Xlen: XlenT> Hart<Xlen> {
+    pub fn new() -> Self {
+        todo!()
+    }
+    pub fn rd_gpr(&self, reg: u8) -> Xlen {
+        if reg == 0 {
+            Xlen::from(0)
+        } else {
+            self.gprs[reg as usize]
+        }
+    }
+    pub fn wr_gpr(&mut self, reg: u8, val: Xlen) {
+        self.gprs[reg as usize] = val;
+    }
+    pub fn advance_pc<T>(&mut self, offset: T) -> Maybe<()>
+    where
+        Xlen: Cast<T>,
+    {
+        self.pc = self.pc.add(offset);
+        Err(())
+    }
+    pub fn set_pc(&mut self, addr: Xlen) -> Maybe<()> {
+        self.pc = addr;
+        Err(())
+    }
+    pub fn get_pc(&self) -> Xlen {
+        self.pc
+    }
 }
-
-// impl<Xlen: XlenT> Hart<Xlen> {
-//     pub fn get_gp(&self, reg: u8) -> Xlen {
-//         if reg == 0 {
-//             Xlen::from(0)
-//         } else {
-//             self.gp_regs[reg as usize]
-//         }
-//     }
-//     pub fn set_gp(&mut self, reg: u8, val: Xlen) {
-//         self.gp_regs[reg as usize] = val;
-//     }
-//     pub fn add_pc<T>(&mut self, val: T)
-//     where
-//         Xlen: Cast<T>,
-//     {
-//         self.pc = self.pc.add(val);
-//     }
-//     pub fn exception(&mut self, reason: Exception) {
-//         todo!()
-//     }
-//     pub fn interrupt(&mut self) {
-//         todo!()
-//     }
-// }
