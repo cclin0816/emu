@@ -229,30 +229,31 @@ pub trait FpOp:
     fn binary_op(fpu: &mut Fpu, rd: u8, rs1: u8, rs2: u8, op: FpBinaryOp) {
         let rs1 = Self::rd_fpr(fpu, rs1);
         let rs2 = Self::rd_fpr(fpu, rs2);
-        let res = fpu
-            .pre_binary_op(rs1, rs2, op)
-            .unwrap_or_else(|| match op {
-                FpBinaryOp::Add => rs1 + rs2,
-                FpBinaryOp::Sub => rs1 - rs2,
-                FpBinaryOp::Mul => rs1 * rs2,
-                FpBinaryOp::Div => rs1 / rs2,
-                // TODO: check for exception correctness
-                // codegen seems fine
-                FpBinaryOp::SgnJ => rs1.copysign(rs2),
-                FpBinaryOp::SgnJN => rs1.copysign(-rs2),
-                FpBinaryOp::SgnJX => {
-                    if rs1.is_neg() == rs2.is_neg() {
-                        rs1
-                    } else {
-                        -rs1
-                    }
+        let res = fpu.pre_binary_op(rs1, rs2, op).unwrap_or_else(|| match op {
+            FpBinaryOp::Add => rs1 + rs2,
+            FpBinaryOp::Sub => rs1 - rs2,
+            FpBinaryOp::Mul => rs1 * rs2,
+            FpBinaryOp::Div => rs1 / rs2,
+            // TODO: check for exception correctness
+            // codegen seems fine
+            FpBinaryOp::SgnJ => rs1.copysign(rs2),
+            FpBinaryOp::SgnJN => rs1.copysign(-rs2),
+            FpBinaryOp::SgnJX => {
+                if rs2.is_neg() {
+                    -rs1
+                } else {
+                    rs1
                 }
-                // TODO: check for exception correctness and (+0, -O)
-                // codegen seems fine
-                FpBinaryOp::Min => rs1.min(rs2),
-                FpBinaryOp::Max => rs1.max(rs2),
-            })
-            .no_nan_box();
+            }
+            // TODO: check for exception correctness and (+0, -O)
+            // codegen seems fine
+            FpBinaryOp::Min => rs1.min(rs2),
+            FpBinaryOp::Max => rs1.max(rs2),
+        });
+        let res = match op {
+            FpBinaryOp::SgnJ | FpBinaryOp::SgnJN | FpBinaryOp::SgnJX => res,
+            _ => res.no_nan_box(),
+        };
         Self::wr_fpr(fpu, rd, res);
     }
     fn unary_op(fpu: &mut Fpu, rd: u8, rs1: u8, op: FpUnaryOp) {
