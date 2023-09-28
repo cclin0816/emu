@@ -1,4 +1,9 @@
-use crate::{hart::Hart, uop::*, utils::Maybe, xlen::XlenT};
+use crate::{
+    hart::Hart,
+    uop::*,
+    utils::Maybe,
+    xlen::{Cast, XlenT},
+};
 
 #[cfg(feature = "F")]
 use crate::fpu::Fpu;
@@ -107,32 +112,32 @@ impl Instr {
             }
             #[cfg(feature = "F")]
             Instr::FpOp3(rd, rs1, rs2, rs3, rm, pr, op) => {
-                hart.set_rm(rm)?;
+                hart.set_rt_rm(rm)?;
                 hart.fpu.ternary_op(rd, rs1, rs2, rs3, pr, op);
                 hart.advance_pc(4)
             }
             #[cfg(feature = "F")]
             Instr::FpOp2(rd, rs1, rs2, rm, pr, op) => {
-                hart.set_rm(rm)?;
+                hart.set_rt_rm(rm)?;
                 hart.fpu.binary_op(rd, rs1, rs2, pr, op);
                 hart.advance_pc(4)
             }
             #[cfg(feature = "F")]
             Instr::FpOp(rd, rs1, rm, pr, op) => {
-                hart.set_rm(rm)?;
+                hart.set_rt_rm(rm)?;
                 hart.fpu.unary_op(rd, rs1, pr, op);
                 hart.advance_pc(4)
             }
             #[cfg(feature = "F")]
             Instr::FpCvtGp(rd, rs1, rm, pr, op) => {
-                hart.set_rm(rm)?;
+                hart.set_rt_rm(rm)?;
                 let val = hart.fpu.fp_cvt_gp(rs1, pr, op);
                 hart.wr_gpr(rd, val);
                 hart.advance_pc(4)
             }
             #[cfg(feature = "F")]
             Instr::GpCvtFp(rd, rs1, rm, pr, op) => {
-                hart.set_rm(rm)?;
+                hart.set_rt_rm(rm)?;
                 let rs1 = hart.rd_gpr(rs1);
                 hart.fpu.gp_cvt_fp(rd, rs1, pr, op);
                 hart.advance_pc(4)
@@ -145,7 +150,7 @@ impl Instr {
             }
             #[cfg(feature = "D")]
             Instr::FpCvtFp(rd, rs1, rm, from, to) => {
-                hart.set_rm(rm)?;
+                hart.set_rt_rm(rm)?;
                 hart.fpu.fp_cvt_fp(rd, rs1, from, to);
                 hart.advance_pc(4)
             }
@@ -191,6 +196,30 @@ impl Instr {
 }
 
 impl<Xlen: XlenT> Hart<Xlen> {
+    fn rd_gpr(&self, reg: u8) -> Xlen {
+        if reg == 0 {
+            Xlen::from(0)
+        } else {
+            self.gprs[reg as usize]
+        }
+    }
+    fn wr_gpr(&mut self, reg: u8, val: Xlen) {
+        self.gprs[reg as usize] = val;
+    }
+    fn advance_pc<T>(&mut self, offset: T) -> Maybe<()>
+    where
+        Xlen: Cast<T>,
+    {
+        self.pc = self.pc.add(offset);
+        Err(())
+    }
+    pub fn set_pc(&mut self, addr: Xlen) -> Maybe<()> {
+        self.pc = addr;
+        Err(())
+    }
+    pub fn get_pc(&self) -> Xlen {
+        self.pc
+    }
     fn op_imm(&mut self, rd: u8, rs1: u8, imm: i32, op: BinaryOp) {
         let lhs = self.rd_gpr(rs1);
         let rhs = Xlen::from(imm);
@@ -255,12 +284,12 @@ impl<Xlen: XlenT> Hart<Xlen> {
         match pr {
             Precision::S => {
                 let val = self.rd_mem32(addr)?;
-                self.fpu.s_from_u32(rd, val);
+                self.fpu.u32_mv_f32(rd, val);
             }
             #[cfg(feature = "D")]
             Precision::D => {
                 let val = self.rd_mem64(addr)?;
-                self.fpu.d_from_u64(rd, val);
+                self.fpu.u64_mv_f64(rd, val);
             }
         };
         Ok(())
@@ -270,12 +299,12 @@ impl<Xlen: XlenT> Hart<Xlen> {
         let addr = self.rd_gpr(rs1).add(offset);
         match pr {
             Precision::S => {
-                let data = self.fpu.s_to_u32(rs2);
+                let data = self.fpu.f32_mv_u32(rs2);
                 self.wr_mem32(addr, data)
             }
             #[cfg(feature = "D")]
             Precision::D => {
-                let data = self.fpu.d_to_u64(rs2);
+                let data = self.fpu.f64_mv_u64(rs2);
                 self.wr_mem64(addr, data)
             }
         }

@@ -2,6 +2,7 @@ use crate::{uop::Instr, xlen::XlenT};
 
 #[derive(Debug, Clone, Default)]
 pub struct UopCache<Xlen: XlenT> {
+    // TODO: add uop cache
     xlen: std::marker::PhantomData<Xlen>,
 }
 

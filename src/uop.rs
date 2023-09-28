@@ -146,12 +146,19 @@ pub enum Precision {
 #[cfg(feature = "F")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RoundMode {
+    /// Round to Nearest, ties to Even
     Rne,
+    /// Round towards Zero
     Rtz,
+    /// Round Down (towards −inf)
     Rdn,
+    /// Round Up (towards +inf)
     Rup,
+    /// Round to Nearest, ties to Max Magnitude
     Rmm,
+    /// Dynamic rounding mode
     Dyn,
+    /// No rounding Operation
     None,
 }
 

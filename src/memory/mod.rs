@@ -4,10 +4,12 @@ use crate::{hart::Hart, uop::BinaryOp, utils::Maybe, xlen::XlenT};
 use crate::uop::MemOrder;
 
 /// holds state of memory subsystem  
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Mem {
     /// is big endian
     be: bool,
+    #[cfg(test)]
+    pub hook_mem: Option<Box<[u8]>>,
 }
 
 impl<Xlen: XlenT> Hart<Xlen> {
@@ -18,6 +20,10 @@ impl<Xlen: XlenT> Hart<Xlen> {
         todo!()
     }
     pub fn rd_mem32(&mut self, addr: Xlen) -> Maybe<u32> {
+        #[cfg(test)]
+        if let Ok(res) = self.mem.hook_rd(addr.into()) {
+            return Ok(res);
+        }
         todo!()
     }
     #[cfg(any(feature = "RV64", feature = "D"))]
@@ -31,6 +37,10 @@ impl<Xlen: XlenT> Hart<Xlen> {
         todo!()
     }
     pub fn wr_mem32(&mut self, addr: Xlen, data: u32) -> Maybe<()> {
+        #[cfg(test)]
+        if let Ok(res) = self.mem.hook_wr(addr.into(), data) {
+            return Ok(res);
+        }
         todo!()
     }
     #[cfg(any(feature = "RV64", feature = "D"))]
@@ -43,6 +53,10 @@ impl<Xlen: XlenT> Hart<Xlen> {
     }
     /// assume align 4
     pub fn fetch_mem32(&mut self, addr: Xlen) -> Maybe<u32> {
+        #[cfg(test)]
+        if let Ok(res) = self.mem.hook_rd(addr.into()) {
+            return Ok(res);
+        }
         todo!()
     }
     /// page fault & access fault have higher priority then misalign
@@ -79,4 +93,31 @@ impl<Xlen: XlenT> Hart<Xlen> {
     pub fn fence_tso(&mut self) {}
     #[cfg(feature = "Zifencei")]
     pub fn fence_i(&mut self) {}
+}
+
+impl Mem {
+    #[cfg(test)]
+    fn hook_rd(&self, addr: usize) -> Maybe<u32> {
+        if let Some(mem_region) = self.hook_mem.as_ref() {
+            if addr + 4 > mem_region.len() {
+                return Err(());
+            }
+            let mut buf = [0u8; 4];
+            buf.copy_from_slice(&mem_region[addr..addr + 4]);
+            return Ok(u32::from_le_bytes(buf));
+        }
+        Err(())
+    }
+    #[cfg(test)]
+    fn hook_wr(&mut self, addr: usize, data: u32) -> Maybe<()> {
+        if let Some(mem_region) = self.hook_mem.as_mut() {
+            if addr + 4 > mem_region.len() {
+                return Err(());
+            }
+            let buf = data.to_le_bytes();
+            mem_region[addr..addr + 4].copy_from_slice(&buf);
+            return Ok(())
+        }
+        Err(())
+    }
 }

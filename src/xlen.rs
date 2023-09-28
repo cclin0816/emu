@@ -1,3 +1,8 @@
+use std::{
+    fmt::{Debug, Display},
+    ops::{BitAnd, BitOr, BitXor, Shl, Shr},
+};
+
 /// same as using `as` keyword
 pub trait Cast<T>: Sized {
     fn from(value: T) -> Self;
@@ -15,6 +20,8 @@ pub trait CastPrimitive:
     + Cast<i32>
     + Cast<i64>
     + Cast<i128>
+    + Cast<usize>
+    + Cast<isize>
 {
 }
 
@@ -35,7 +42,7 @@ macro_rules! impl_cast {
 
 macro_rules! impl_cast_primitive {
     ($t:ty) => {
-        impl_cast!($t, u8, u16, u32, u64, u128, i8, i16, i32, i64, i128);
+        impl_cast!($t, u8, u16, u32, u64, u128, i8, i16, i32, i64, i128, usize, isize);
         impl CastPrimitive for $t {}
     };
 }
@@ -152,13 +159,13 @@ pub trait XlenT:
     + Copy
     + Default
     + Ord
-    + std::fmt::Display
-    + std::fmt::Debug
-    + std::ops::BitAnd<Output = Self>
-    + std::ops::BitOr<Output = Self>
-    + std::ops::BitXor<Output = Self>
-    + std::ops::Shl<u32, Output = Self>
-    + std::ops::Shr<u32, Output = Self>
+    + Display
+    + Debug
+    + BitAnd<Output = Self>
+    + BitOr<Output = Self>
+    + BitXor<Output = Self>
+    + Shl<u32, Output = Self>
+    + Shr<u32, Output = Self>
     + CastPrimitive
     + Cast<Self>
     + XlenOp

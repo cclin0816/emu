@@ -14,8 +14,8 @@ mod dec32;
 
 #[derive(Debug, Clone, Default)]
 pub struct FrontEnd<Xlen: XlenT> {
-    isa: common::Isa<Xlen>,
     cache: cache::UopCache<Xlen>,
+    isa: common::Isa<Xlen>,
 }
 
 fn is_c_ins(ins: u16) -> bool {
