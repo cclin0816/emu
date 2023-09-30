@@ -2,7 +2,8 @@
 #include <cfenv>
 #include <cmath>
 #include <cstdint>
-#include <format>
+#define FMT_HEADER_ONLY
+#include <fmt/core.h>
 #include <iostream>
 #include <string_view>
 
@@ -44,53 +45,53 @@ bool is_neg(f32_t fp) { return fp.u & 0x80000000; }
 // bool is_quiet(f64_t fp) { return fp.u & 0x8000000000000; }
 // bool is_neg(f64_t fp) { return fp.u & 0x8000000000000000; }
 
-// NOINLINE void print_fp(auto fp) {
-//   if (is_nan(fp)) {
-//     if (is_quiet(fp)) {
-//       if (is_neg(fp)) {
-//         std::cout << " -qNan  ";
-//       } else {
-//         std::cout << "  qNan  ";
-//       }
-//     } else {
-//       if (is_neg(fp)) {
-//         std::cout << " -sNan  ";
-//       } else {
-//         std::cout << "  sNan  ";
-//       }
-//     }
-//   } else {
-//     std::cout << std::format("{:^8.0e}", fp.f);
-//   }
-// }
+template <typename Tp> void print_fp(Tp fp) {
+  if (is_nan(fp)) {
+    if (is_quiet(fp)) {
+      if (is_neg(fp)) {
+        std::cout << " -qNan  ";
+      } else {
+        std::cout << "  qNan  ";
+      }
+    } else {
+      if (is_neg(fp)) {
+        std::cout << " -sNan  ";
+      } else {
+        std::cout << "  sNan  ";
+      }
+    }
+  } else {
+    std::cout << fmt::format("{:^8.0e}", fp.f);
+  }
+}
 
-// NOINLINE void set_color(int ec) {
-//   switch (ec) {
-//     case 0:
-//       break;
-//     case FE_INVALID:
-//       std::cout << "\033[1;31m";
-//       break;
-//     case FE_DIVBYZERO:
-//       std::cout << "\033[1;35m";
-//       break;
-//     case FE_INEXACT:
-//       std::cout << "\033[1;32m";
-//       break;
-//     case FE_OVERFLOW | FE_INEXACT:
-//       std::cout << "\033[1;34m";
-//       break;
-//     case FE_UNDERFLOW | FE_INEXACT:
-//       std::cout << "\033[1;33m";
-//       break;
-//     default:
-//       std::cerr << std::format("[[EC: {:x}]]", ec);
-//       break;
-//   }
-// }
-// NOINLINE void reset_color() { std::cout << "\033[0m"; }
-NOINLINE int get_ec() { return std::fetestexcept(FE_ALL_EXCEPT); }
-NOINLINE int clear_ec() { return std::feclearexcept(FE_ALL_EXCEPT); }
+NOINLINE void set_color(int ec) {
+  switch (ec) {
+  case 0:
+    break;
+  case FE_INVALID:
+    std::cout << "\033[1;31m";
+    break;
+  case FE_DIVBYZERO:
+    std::cout << "\033[1;35m";
+    break;
+  case FE_INEXACT:
+    std::cout << "\033[1;32m";
+    break;
+  case FE_OVERFLOW | FE_INEXACT:
+    std::cout << "\033[1;34m";
+    break;
+  case FE_UNDERFLOW | FE_INEXACT:
+    std::cout << "\033[1;33m";
+    break;
+  default:
+    std::cerr << fmt::format("[[EC: {:x}]]", ec);
+    break;
+  }
+}
+void reset_color() { std::cout << "\033[0m"; }
+int get_ec() { return std::fetestexcept(FE_ALL_EXCEPT); }
+int clear_ec() { return std::feclearexcept(FE_ALL_EXCEPT); }
 
 // template <typename T>
 // NOINLINE T cast(auto a) {
@@ -122,7 +123,7 @@ NOINLINE int clear_ec() { return std::feclearexcept(FE_ALL_EXCEPT); }
 //   reset_color();
 // }
 
-void print(auto fp, int ec) {
+template <typename Tp> void print(Tp fp, int ec) {
   u32 e = 0;
   if ((ec & FE_INVALID) == FE_INVALID) {
     e |= 16;
@@ -139,13 +140,16 @@ void print(auto fp, int ec) {
   if ((ec & FE_INEXACT) == FE_INEXACT) {
     e |= 1;
   }
-  std::cout << std::format("({:#x}, {:#x}), ", fp.u, e);
+  std::cout << fmt::format("({:#x}, {:#x}), ", fp.u, e);
+  /* set_color(ec); */
+  /* print_fp(fp); */
+  /* reset_color(); */
 }
 
 int main() {
-  // std::array<std::string_view, 14> fp_name{
-  //     "-qNan", "-sNan", "-Inf", "-big", "-1",  "-tiny", "-0",
-  //     "0",     "tiny",  "1",    "big",  "Inf", "sNan",  "qNan"};
+  std::array<std::string_view, 14> fp_name{
+      "-qNan", "-sNan", "-Inf", "-big", "-1",  "-tiny", "-0",
+      "0",     "tiny",  "1",    "big",  "Inf", "sNan",  "qNan"};
   std::array<f32_t, 14> fp_arr;
   fp_arr[0].u = 0xffc00000;
   fp_arr[1].u = 0xff800001;
@@ -162,12 +166,17 @@ int main() {
   fp_arr[12].u = 0x7f800001;
   fp_arr[13].u = 0x7fc00000;
 
+  /* for (auto n : fp_name) { */
+  /*   std::cout << fmt::format("{:^8}", n); */
+  /* } */
+  /* std::cout << '\n'; */
   for (auto v1 : fp_arr) {
     for (auto v2 : fp_arr) {
       f32_t res;
       clear_ec();
-      asm volatile("fsgnjx.s %0, %1, %2" : "=f"(res.f) : "f"(v1.f), "f"(v2.f));
+      asm volatile("fmax.s %0, %1, %2" : "=f"(res.f) : "f"(v1.f), "f"(v2.f));
       print(res, get_ec());
     }
+    /* std::cout << '\n'; */
   }
 }

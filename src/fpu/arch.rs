@@ -12,10 +12,12 @@ use core::arch::x86 as arch;
 #[cfg(target_arch = "x86_64")]
 use core::arch::x86_64 as arch;
 
+// these are used for hijacking / fixing broken fpu
 impl Fpu {
     pub fn pre_fma<T: FpOp>(&mut self, _a: T, _b: T, _c: T) -> Option<T> {
         #[cfg(target_feature = "sse")]
         match (_a.classify(), _b.classify()) {
+            // fix 0 * inf + qnan should raise exceptions
             (FpCat::Zero, FpCat::Infinite) | (FpCat::Infinite, FpCat::Zero) => {
                 self.set_fpe(FPE_NV);
                 return Some(T::canonical_nan());
@@ -26,6 +28,17 @@ impl Fpu {
     }
 
     pub fn pre_binary_op<T: FpOp>(&mut self, _a: T, _b: T, _op: FpBinaryOp) -> Option<T> {
+        if matches!(_op, FpBinaryOp::Min | FpBinaryOp::Max) {
+            #[cfg(target_feature = "sse")]
+            {
+                // fix (qnan, !snan) (!snan, qnan) should not set exceptions
+                match (_a.is_nan_safe(), _b.is_nan_safe()) {
+                    (false, false) => (),
+                    _ => {}
+                }
+            }
+            // fix (+0, -0) (-0, +0) should return -0
+        }
         None
     }
 

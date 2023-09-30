@@ -190,17 +190,19 @@ pub trait FpOp:
     + Div<Output = Self>
     + PartialOrd
 {
+    type BitRep;
+    const QNAN_BITS: Self::BitRep;
+
     fn rd_fpr(fpu: &Fpu, reg: u8) -> Self;
     fn wr_fpr(fpu: &mut Fpu, reg: u8, val: Self);
     /// return canonical Nan defined in risc-v standard
     fn canonical_nan() -> Self;
-    fn classify(self) -> FpCategory;
-    fn is_nan(self) -> bool;
     /// check if quiet bit defined in risc-v standard is set
-    fn is_quiet(self) -> bool;
+    fn is_quiet_safe(self) -> bool;
+    fn is_qnan_safe(self) -> bool;
     fn no_nan_box(self) -> Self {
+        // TODO: some arch can bypass this
         if self.is_nan() {
-            // TODO: some arch can bypass this
             Self::canonical_nan()
         } else {
             self
@@ -234,8 +236,6 @@ pub trait FpOp:
             FpBinaryOp::Sub => rs1 - rs2,
             FpBinaryOp::Mul => rs1 * rs2,
             FpBinaryOp::Div => rs1 / rs2,
-            // TODO: check for exception correctness
-            // codegen seems fine
             FpBinaryOp::SgnJ => rs1.copysign(rs2),
             FpBinaryOp::SgnJN => rs1.copysign(-rs2),
             FpBinaryOp::SgnJX => {
@@ -245,8 +245,6 @@ pub trait FpOp:
                     rs1
                 }
             }
-            // TODO: check for exception correctness and (+0, -O)
-            // codegen seems fine
             FpBinaryOp::Min => rs1.min(rs2),
             FpBinaryOp::Max => rs1.max(rs2),
         });
@@ -280,7 +278,7 @@ pub trait FpOp:
         let rs1 = Self::rd_fpr(fpu, rs1);
         // TODO: check exception correctness
         // codegen seems fine
-        match (rs1.is_neg(), rs1.classify(), rs1.is_quiet()) {
+        match (rs1.is_neg(), rs1.classify(), rs1.is_quiet_safe()) {
             (true, FpCategory::Infinite, _) => 1 << 0,
             (true, FpCategory::Normal, _) => 1 << 1,
             (true, FpCategory::Subnormal, _) => 1 << 2,
@@ -304,6 +302,7 @@ pub trait FpOp:
             FpCmpCond::Le => rs1 <= rs2,
         }
     }
+
     // fp use std
     fn mul_add(self, a: Self, b: Self) -> Self;
     fn sqrt(self) -> Self;
@@ -311,6 +310,10 @@ pub trait FpOp:
     fn max(self, rhs: Self) -> Self;
     fn min(self, rhs: Self) -> Self;
     fn is_neg(self) -> bool;
+    fn classify(self) -> FpCategory;
+    fn is_nan(self) -> bool;
+    fn from_bits(val: Self::BitRep) -> Self;
+    fn to_bits(self) -> Self::BitRep;
 }
 
 macro_rules! fp_use_std {
@@ -333,10 +336,28 @@ macro_rules! fp_use_std {
         fn is_neg(self) -> bool {
             self.is_sign_negative()
         }
+        fn classify(self) -> FpCategory {
+            self.classify()
+        }
+        fn is_nan(self) -> bool {
+            self.is_nan()
+        }
+        fn from_bits(val: Self::BitRep) -> Self {
+            Self::from_bits(val)
+        }
+        fn to_bits(self) -> Self::BitRep {
+            self.to_bits()
+        }
+        fn is_qnan_safe(self) -> bool {
+            let qnan = Self::canonical_nan().to_bits();
+            self.to_bits() & qnan == qnan
+        }
     };
 }
 
 impl FpOp for f32 {
+    type BitRep = u32;
+    const QNAN_BITS: u32 = 0x7fc00000;
     fn canonical_nan() -> Self {
         Self::from_bits(0x7fc00000)
     }
@@ -351,16 +372,7 @@ impl FpOp for f32 {
         write_fpr_as!(fpr, f32, val);
     }
 
-    fn classify(self) -> FpCategory {
-        // TODO: fix classify exception problem
-        self.classify()
-    }
-    fn is_nan(self) -> bool {
-        // TODO: fix nan exception problem
-        self.is_nan()
-    }
-
-    fn is_quiet(self) -> bool {
+    fn is_quiet_safe(self) -> bool {
         self.to_bits() & 0x400000 != 0
     }
 
@@ -401,6 +413,8 @@ impl FpOp for f32 {
 
 #[cfg(feature = "D")]
 impl FpOp for f64 {
+    type BitRep = u64;
+    const QNAN_BITS: u64 = 0x7ff8000000000000;
     fn canonical_nan() -> Self {
         f64::from_bits(0x7ff8000000000000)
     }
@@ -415,15 +429,7 @@ impl FpOp for f64 {
         write_fpr_as!(fpr, f64, val);
     }
 
-    fn classify(self) -> FpCategory {
-        // TODO: fix classify problem
-        self.classify()
-    }
-    fn is_nan(self) -> bool {
-        // TODO: fix nan problem
-        self.is_nan()
-    }
-    fn is_quiet(self) -> bool {
+    fn is_quiet_safe(self) -> bool {
         self.to_bits() & 0x8000000000000 != 0
     }
 
