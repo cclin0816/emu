@@ -31,13 +31,33 @@ impl Fpu {
         if matches!(_op, FpBinaryOp::Min | FpBinaryOp::Max) {
             #[cfg(target_feature = "sse")]
             {
-                // fix (qnan, !snan) (!snan, qnan) should not set exceptions
-                match (_a.is_nan_safe(), _b.is_nan_safe()) {
+                // fix (qnan, !snan) (!snan, qnan) should not raise exceptions
+                fn chk_res<T: FpOp>(val: T) -> Option<T> {
+                    // use is_nan to raise exception if snan
+                    if val.is_nan() {
+                        return Some(T::canonical_nan());
+                    } else {
+                        return Some(val);
+                    }
+                }
+                match (_a.is_qnan_safe(), _b.is_qnan_safe()) {
                     (false, false) => (),
-                    _ => {}
+                    (false, true) => return chk_res(_a),
+                    (true, false) => return chk_res(_b),
+                    (true, true) => return Some(T::canonical_nan()),
+                }
+                println!("{:?} {:?} fix me", _a, _b);
+                // fix min(-0, +0) -> -0 max(+0, -0) -> +0
+                if _a.is_zero() && _b.is_zero() {
+                    match (_op, _a.is_neg(), _b.is_neg()) {
+                        (FpBinaryOp::Min, true, false) => return Some(_a),
+                        (FpBinaryOp::Min, _, _) => return Some(_b),
+                        (FpBinaryOp::Max, true, false) => return Some(_b),
+                        (FpBinaryOp::Max, _, _) => return Some(_a),
+                        _ => unreachable!(),
+                    }
                 }
             }
-            // fix (+0, -0) (-0, +0) should return -0
         }
         None
     }

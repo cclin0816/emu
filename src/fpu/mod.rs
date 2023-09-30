@@ -182,6 +182,7 @@ macro_rules! pr_switch {
 
 pub trait FpOp:
     Sized
+    + std::fmt::Debug
     + Copy
     + Neg<Output = Self>
     + Add<Output = Self>
@@ -190,16 +191,10 @@ pub trait FpOp:
     + Div<Output = Self>
     + PartialOrd
 {
-    type BitRep;
-    const QNAN_BITS: Self::BitRep;
+    fn canonical_nan() -> Self {
+        Self::from_bits(Self::QNAN_BITS)
+    }
 
-    fn rd_fpr(fpu: &Fpu, reg: u8) -> Self;
-    fn wr_fpr(fpu: &mut Fpu, reg: u8, val: Self);
-    /// return canonical Nan defined in risc-v standard
-    fn canonical_nan() -> Self;
-    /// check if quiet bit defined in risc-v standard is set
-    fn is_quiet_safe(self) -> bool;
-    fn is_qnan_safe(self) -> bool;
     fn no_nan_box(self) -> Self {
         // TODO: some arch can bypass this
         if self.is_nan() {
@@ -208,6 +203,7 @@ pub trait FpOp:
             self
         }
     }
+
     fn ternary_op(fpu: &mut Fpu, rd: u8, rs1: u8, rs2: u8, rs3: u8, op: FpTernaryOp) {
         let rs1 = Self::rd_fpr(fpu, rs1);
         let mut rs2 = Self::rd_fpr(fpu, rs2);
@@ -228,6 +224,7 @@ pub trait FpOp:
             .no_nan_box();
         Self::wr_fpr(fpu, rd, res);
     }
+
     fn binary_op(fpu: &mut Fpu, rd: u8, rs1: u8, rs2: u8, op: FpBinaryOp) {
         let rs1 = Self::rd_fpr(fpu, rs1);
         let rs2 = Self::rd_fpr(fpu, rs2);
@@ -245,8 +242,16 @@ pub trait FpOp:
                     rs1
                 }
             }
-            FpBinaryOp::Min => rs1.min(rs2),
-            FpBinaryOp::Max => rs1.max(rs2),
+            FpBinaryOp::Min => {
+                println!("{:?} {:?} fix me", rs1, rs2);
+                let res = rs1.min(rs2);
+                println!("{:?}", res);
+                res
+            }
+            FpBinaryOp::Max => {
+                println!("{:?} {:?} fix me", rs1, rs2);
+                rs1.max(rs2)
+            }
         });
         let res = match op {
             FpBinaryOp::SgnJ | FpBinaryOp::SgnJN | FpBinaryOp::SgnJX => res,
@@ -254,6 +259,7 @@ pub trait FpOp:
         };
         Self::wr_fpr(fpu, rd, res);
     }
+
     fn unary_op(fpu: &mut Fpu, rd: u8, rs1: u8, op: FpUnaryOp) {
         let rs1 = Self::rd_fpr(fpu, rs1);
         let res = fpu
@@ -266,19 +272,12 @@ pub trait FpOp:
             .no_nan_box();
         Self::wr_fpr(fpu, rd, res);
     }
-    fn fp_to_i32(fpu: &Fpu, rs1: u8) -> i32;
-    fn fp_to_u32(fpu: &Fpu, rs1: u8) -> u32;
-    fn fp_to_i64(fpu: &Fpu, rs1: u8) -> i64;
-    fn fp_to_u64(fpu: &Fpu, rs1: u8) -> i32;
-    fn i32_to_fp(fpu: &mut Fpu, rd: u8, rs1: i32);
-    fn u32_to_fp(fpu: &mut Fpu, rd: u8, rs1: u32);
-    fn i64_to_fp(fpu: &mut Fpu, rd: u8, rs1: i64);
-    fn u64_to_fp(fpu: &mut Fpu, rd: u8, rs1: u64);
+
     fn class(fpu: &Fpu, rs1: u8) -> u32 {
         let rs1 = Self::rd_fpr(fpu, rs1);
         // TODO: check exception correctness
         // codegen seems fine
-        match (rs1.is_neg(), rs1.classify(), rs1.is_quiet_safe()) {
+        match (rs1.is_neg(), rs1.classify(), rs1.is_quiet()) {
             (true, FpCategory::Infinite, _) => 1 << 0,
             (true, FpCategory::Normal, _) => 1 << 1,
             (true, FpCategory::Subnormal, _) => 1 << 2,
@@ -291,6 +290,7 @@ pub trait FpOp:
             (_, FpCategory::Nan, true) => 1 << 9,
         }
     }
+
     fn cmp(fpu: &Fpu, rs1: u8, rs2: u8, op: FpCmpCond) -> bool {
         let rs1 = Self::rd_fpr(fpu, rs1);
         let rs2 = Self::rd_fpr(fpu, rs2);
@@ -303,7 +303,30 @@ pub trait FpOp:
         }
     }
 
-    // fp use std
+    fn fp_to_i32(fpu: &Fpu, rs1: u8) -> i32;
+    fn fp_to_u32(fpu: &Fpu, rs1: u8) -> u32;
+    fn fp_to_i64(fpu: &Fpu, rs1: u8) -> i64;
+    fn fp_to_u64(fpu: &Fpu, rs1: u8) -> i32;
+    fn i32_to_fp(fpu: &mut Fpu, rd: u8, rs1: i32);
+    fn u32_to_fp(fpu: &mut Fpu, rd: u8, rs1: u32);
+    fn i64_to_fp(fpu: &mut Fpu, rd: u8, rs1: i64);
+    fn u64_to_fp(fpu: &mut Fpu, rd: u8, rs1: u64);
+
+    // type def
+    type BitRep;
+    const QNAN_BITS: Self::BitRep;
+    const Q_BIT: Self::BitRep;
+
+    // impl required
+    fn rd_fpr(fpu: &Fpu, reg: u8) -> Self;
+    fn wr_fpr(fpu: &mut Fpu, reg: u8, val: Self);
+
+    // fp common macro
+    fn is_quiet(self) -> bool;
+    fn is_qnan_safe(self) -> bool;
+    fn is_zero(self) -> bool;
+
+    // fp use std macro
     fn mul_add(self, a: Self, b: Self) -> Self;
     fn sqrt(self) -> Self;
     fn copysign(self, rhs: Self) -> Self;
@@ -330,6 +353,7 @@ macro_rules! fp_use_std {
         fn max(self, rhs: Self) -> Self {
             self.max(rhs)
         }
+        #[inline(never)]
         fn min(self, rhs: Self) -> Self {
             self.min(rhs)
         }
@@ -348,9 +372,53 @@ macro_rules! fp_use_std {
         fn to_bits(self) -> Self::BitRep {
             self.to_bits()
         }
+    };
+}
+
+macro_rules! fp_common {
+    () => {
         fn is_qnan_safe(self) -> bool {
-            let qnan = Self::canonical_nan().to_bits();
-            self.to_bits() & qnan == qnan
+            self.to_bits() & Self::QNAN_BITS == Self::QNAN_BITS
+        }
+
+        fn is_quiet(self) -> bool {
+            self.to_bits() & Self::Q_BIT != 0
+        }
+
+        fn is_zero(self) -> bool {
+            self.to_bits() << 1 == 0
+        }
+
+        fn fp_to_i32(fpu: &Fpu, rs1: u8) -> i32 {
+            todo!()
+        }
+
+        fn fp_to_u32(fpu: &Fpu, rs1: u8) -> u32 {
+            todo!()
+        }
+
+        fn fp_to_i64(fpu: &Fpu, rs1: u8) -> i64 {
+            todo!()
+        }
+
+        fn fp_to_u64(fpu: &Fpu, rs1: u8) -> i32 {
+            todo!()
+        }
+
+        fn i32_to_fp(fpu: &mut Fpu, rd: u8, rs1: i32) {
+            todo!()
+        }
+
+        fn u32_to_fp(fpu: &mut Fpu, rd: u8, rs1: u32) {
+            todo!()
+        }
+
+        fn i64_to_fp(fpu: &mut Fpu, rd: u8, rs1: i64) {
+            todo!()
+        }
+
+        fn u64_to_fp(fpu: &mut Fpu, rd: u8, rs1: u64) {
+            todo!()
         }
     };
 }
@@ -358,9 +426,7 @@ macro_rules! fp_use_std {
 impl FpOp for f32 {
     type BitRep = u32;
     const QNAN_BITS: u32 = 0x7fc00000;
-    fn canonical_nan() -> Self {
-        Self::from_bits(0x7fc00000)
-    }
+    const Q_BIT: u32 = 0x400000;
 
     fn rd_fpr(fpu: &Fpu, reg: u8) -> Self {
         let fpr = fpu.fprs[reg as usize];
@@ -372,52 +438,15 @@ impl FpOp for f32 {
         write_fpr_as!(fpr, f32, val);
     }
 
-    fn is_quiet_safe(self) -> bool {
-        self.to_bits() & 0x400000 != 0
-    }
-
+    fp_common!();
     fp_use_std!();
-
-    fn fp_to_i32(fpu: &Fpu, rs1: u8) -> i32 {
-        todo!()
-    }
-
-    fn fp_to_u32(fpu: &Fpu, rs1: u8) -> u32 {
-        todo!()
-    }
-
-    fn fp_to_i64(fpu: &Fpu, rs1: u8) -> i64 {
-        todo!()
-    }
-
-    fn fp_to_u64(fpu: &Fpu, rs1: u8) -> i32 {
-        todo!()
-    }
-
-    fn i32_to_fp(fpu: &mut Fpu, rd: u8, rs1: i32) {
-        todo!()
-    }
-
-    fn u32_to_fp(fpu: &mut Fpu, rd: u8, rs1: u32) {
-        todo!()
-    }
-
-    fn i64_to_fp(fpu: &mut Fpu, rd: u8, rs1: i64) {
-        todo!()
-    }
-
-    fn u64_to_fp(fpu: &mut Fpu, rd: u8, rs1: u64) {
-        todo!()
-    }
 }
 
 #[cfg(feature = "D")]
 impl FpOp for f64 {
     type BitRep = u64;
     const QNAN_BITS: u64 = 0x7ff8000000000000;
-    fn canonical_nan() -> Self {
-        f64::from_bits(0x7ff8000000000000)
-    }
+    const Q_BIT: u64 = 0x7ff0000000000000;
 
     fn rd_fpr(fpu: &Fpu, reg: u8) -> Self {
         let fpr = fpu.fprs[reg as usize];
@@ -429,43 +458,8 @@ impl FpOp for f64 {
         write_fpr_as!(fpr, f64, val);
     }
 
-    fn is_quiet_safe(self) -> bool {
-        self.to_bits() & 0x8000000000000 != 0
-    }
-
+    fp_common!();
     fp_use_std!();
-
-    fn fp_to_i32(fpu: &Fpu, rs1: u8) -> i32 {
-        todo!()
-    }
-
-    fn fp_to_u32(fpu: &Fpu, rs1: u8) -> u32 {
-        todo!()
-    }
-
-    fn fp_to_i64(fpu: &Fpu, rs1: u8) -> i64 {
-        todo!()
-    }
-
-    fn fp_to_u64(fpu: &Fpu, rs1: u8) -> i32 {
-        todo!()
-    }
-
-    fn i32_to_fp(fpu: &mut Fpu, rd: u8, rs1: i32) {
-        todo!()
-    }
-
-    fn u32_to_fp(fpu: &mut Fpu, rd: u8, rs1: u32) {
-        todo!()
-    }
-
-    fn i64_to_fp(fpu: &mut Fpu, rd: u8, rs1: i64) {
-        todo!()
-    }
-
-    fn u64_to_fp(fpu: &mut Fpu, rd: u8, rs1: u64) {
-        todo!()
-    }
 }
 
 impl Fpu {
